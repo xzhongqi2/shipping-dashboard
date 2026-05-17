@@ -14,8 +14,6 @@ const CONTAINERS = [
   { name: '美东北', capacityCBM: 70, capacityKG: 12000 },
 ]
 
-const EMPTY_STATE = {}
-CONTAINERS.forEach(c => { EMPTY_STATE[c.name] = { cbm: 0, kg: 0, revenue: 0 } })
 
 // ─────────────────────────────────
 // 工具函数
@@ -377,75 +375,7 @@ function AdminButton({ isAdmin, onLogin, onLogout }) {
 }
 
 // ─────────────────────────────────
-// 组件：登录 / 注册
-// ─────────────────────────────────
-function Auth({ onLogin }) {
-  const [email, setEmail]     = useState('')
-  const [pass,  setPass]      = useState('')
-  const [isNew, setIsNew]     = useState(false)
-  const [name,  setNameAuth]   = useState('')
-  const [msg,   setMsg]       = useState('')
-  const [busy,  setBusy]      = useState(false)
-
-  const submit = async (e) => {
-    e.preventDefault()
-    setMsg(''); setBusy(true)
-    try {
-      if (isNew) {
-        if (!name.trim()) { setMsg('⚠️ 请输入姓名'); setBusy(false); return }
-        const { error } = await supabase.auth.signUp({ email, password: pass, options: { data: { name: name.trim() } } })
-        if (error) throw error
-        setMsg('✅ 注册成功！请检查邮箱验证后登录。')
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password: pass })
-        if (error) throw error
-      }
-    } catch (e) {
-      setMsg('❌ ' + e.message)
-    }
-    setBusy(false)
-  }
-
-  return (
-    <div className="min-h-screen bg-gray-50/80 flex items-center justify-center px-4">
-      <div className="w-full max-w-sm bg-white rounded-2xl shadow border border-gray-100 p-8">
-        <h2 className="text-xl font-bold text-gray-900 mb-1">海运拼箱系统</h2>
-        <p className="text-xs text-gray-400 mb-6">{isNew ? '注册新账号' : '登录您的账号'}</p>
-        <form onSubmit={submit} className="space-y-4">
-          {isNew && (
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">姓名（UID将基于此生成）</label>
-              <input value={name} onChange={e => setNameAuth(e.target.value)} placeholder="张三"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
-            </div>
-          )}
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">邮箱</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">密码</label>
-            <input type="password" value={pass} onChange={e => setPass(e.target.value)} placeholder="••••••"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
-          </div>
-          {msg && <p className="text-sm">{msg}</p>}
-          <button type="submit" disabled={busy}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2.5 rounded-lg transition-colors disabled:opacity-50">
-            {busy ? '处理中...' : isNew ? '注册' : '登录'}
-          </button>
-        </form>
-        <p className="text-center text-xs text-gray-400 mt-4 cursor-pointer hover:text-blue-600"
-          onClick={() => { setIsNew(!isNew); setMsg('') }}>
-          {isNew ? '已有账号？立即登录' : '没有账号？立即注册'}
-        </p>
-      </div>
-    </div>
-  )
-}
-
-// ─────────────────────────────────
-// 主 App（无需登录）
+// 主 App
 // ─────────────────────────────────
 export default function App() {
   const clientId = useClientId()
