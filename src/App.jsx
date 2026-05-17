@@ -259,6 +259,65 @@ function Summary({ state, costs }) {
 }
 
 // ─────────────────────────────────
+// 组件：成本配置面板 (仅管理员)
+// ─────────────────────────────────
+function CostConfigPanel({ costs, onUpdate }) {
+  const [editing, setEditing] = useState(null)
+  const [draft, setDraft]     = useState('')
+  const [busy, setBusy]       = useState(false)
+  const [err, setErr]         = useState('')
+
+  const start = (container) => {
+    setEditing(container); setDraft(String(costs[container] ?? '')); setErr('')
+  }
+  const save = async () => {
+    const num = parseFloat(draft)
+    if (isNaN(num) || num < 0) { setErr('请输入有效数字'); return }
+    setBusy(true)
+    try {
+      await onUpdate(editing, num)
+      setEditing(null); setDraft(''); setErr('')
+    } catch (e) {
+      setErr('保存失败:' + e.message)
+    }
+    setBusy(false)
+  }
+  const cancel = () => { setEditing(null); setDraft(''); setErr('') }
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
+      <h3 className="text-base font-semibold text-gray-800 mb-4">成本配置 (仅管理员可见)</h3>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {CONTAINERS.map(c => (
+          <div key={c.name} className="border border-gray-100 rounded-lg p-3">
+            <p className="text-xs text-gray-500 mb-1">{c.name}</p>
+            {editing === c.name ? (
+              <div>
+                <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
+                  className="w-full border border-gray-200 rounded px-2 py-1 text-sm" />
+                <div className="flex gap-2 mt-2">
+                  <button onClick={save} disabled={busy}
+                    className="text-xs bg-green-600 text-white hover:bg-green-700 px-2 py-1 rounded disabled:opacity-50">
+                    {busy ? '...' : '保存'}
+                  </button>
+                  <button onClick={cancel} className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">取消</button>
+                </div>
+                {err && <p className="text-xs text-red-500 mt-1">{err}</p>}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-gray-800">¥{(costs[c.name] ?? 0).toLocaleString()}</span>
+                <button onClick={() => start(c.name)} className="text-xs text-blue-600 hover:text-blue-800">编辑</button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────
 // 组件：管理员入口按钮
 // ─────────────────────────────────
 function AdminButton({ isAdmin, onLogin, onLogout }) {
@@ -453,6 +512,8 @@ export default function App() {
             />
           </div>
         </div>
+
+        {isAdmin && <CostConfigPanel costs={costs} onUpdate={updateCost} />}
 
         <div className="mb-6"><Summary state={state} costs={isAdmin ? costs : null} /></div>
 
