@@ -1,5 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
-import { supabase } from './lib/supabase'
+import { useState, useCallback } from 'react'
 
 // ─────────────────────────────────
 // 柜子配置
@@ -313,52 +312,24 @@ function Auth({ onLogin }) {
 }
 
 // ─────────────────────────────────
-// 主 App
+// 主 App（无需登录）
 // ─────────────────────────────────
 export default function App() {
-  const [user,   setUser]   = useState(null)   // 当前用户
   const [state,  setState]  = useState(EMPTY_STATE)
   const [records, setRecords] = useState([])
-  const [loading, setLoading] = useState(true)
-
-  // ── 恢复登录状态 + 加载数据 ──
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      if (session?.user) loadData(session.user.id)
-    })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
-      if (session?.user) loadData(session.user.id)
-      else { setState(EMPTY_STATE); setRecords([]) }
-    })
-    return () => subscription.unsubscribe()
-  }, [])
-
-  async function loadData(uid) {
-    setLoading(true)
-    const { data, error } = await supabase.from('records').select('*').eq('user_id', uid).order('created_at', { ascending: false })
-    if (!error && data) {
-      setRecords(data)
-      const s = { ...EMPTY_STATE }
-      data.forEach(r => {
-        s[r.container].cbm     += r.cbm
-        s[r.container].kg      += r.kg
-        s[r.container].revenue += r.revenue
-      })
-      setState(s)
-    }
-    setLoading(false)
-  }
 
   // ── 添加记录 ──
-  const handleSubmit = useCallback(async (salesperson, container, cbm, kg, revenue) => {
-    if (!user) return
-    const { data, error } = await supabase.from('records').insert({
-      user_id: user.id, salesperson, container, cbm, kg, revenue
-    }).select().single()
-    if (error) { alert('添加失败：' + error.message); return }
-    setRecords(prev => [data, ...prev])
+  const handleSubmit = useCallback((salesperson, container, cbm, kg, revenue) => {
+    const newRecord = {
+      id: Date.now(),
+      salesperson,
+      container,
+      cbm,
+      kg,
+      revenue,
+      created_at: new Date().toISOString(),
+    }
+    setRecords(prev => [newRecord, ...prev])
     setState(prev => ({
       ...prev,
       [container]: {
@@ -367,14 +338,12 @@ export default function App() {
         revenue: prev[container].revenue + revenue,
       }
     }))
-  }, [user])
+  }, [])
 
   // ── 删除记录 ──
-  const handleDelete = useCallback(async (id) => {
+  const handleDelete = useCallback((id) => {
     const record = records.find(r => r.id === id)
     if (!record) return
-    const { error } = await supabase.from('records').delete().eq('id', id)
-    if (error) { alert('删除失败：' + error.message); return }
     setRecords(prev => prev.filter(r => r.id !== id))
     setState(prev => ({
       ...prev,
@@ -387,36 +356,28 @@ export default function App() {
   }, [records])
 
   // ── 更新记录 ──
-  const handleUpdate = useCallback(async (id, updated) => {
+  const handleUpdate = useCallback((id, updated) => {
     const old = records.find(r => r.id === id)
     if (!old) return
-    const { data, error } = await supabase.from('records').update({
+    const newData = {
+      ...old,
       salesperson: updated.salesperson,
       container:   updated.container,
       cbm:         parseFloat(updated.cbm) || 0,
       kg:          parseFloat(updated.kg)  || 0,
       revenue:     parseFloat(updated.revenue) || 0,
-    }).eq('id', id).select().single()
-    if (error) { alert('更新失败：' + error.message); return }
-    setRecords(prev => prev.map(r => r.id === id ? data : r))
+    }
+    const newRecords = records.map(r => r.id === id ? newData : r)
+    setRecords(newRecords)
     // 刷新汇总
     const s = { ...EMPTY_STATE }
-    records.map(r => r.id === id ? data : r).forEach(r => {
+    newRecords.forEach(r => {
       s[r.container].cbm     += r.cbm
       s[r.container].kg      += r.kg
       s[r.container].revenue += r.revenue
     })
     setState(s)
   }, [records])
-
-  // ── 登出 ──
-  const logout = async () => { await supabase.auth.signOut(); setUser(null) }
-
-  // ── 未登录：显示 Auth 页面 ──
-  if (!user) return <Auth onLogin={setUser} />
-
-  // ── 已登录：显示主界面 ──
-  const displayName = user.user_metadata?.name || user.email
 
   return (
     <div className="min-h-screen bg-gray-50/80">
@@ -427,10 +388,6 @@ export default function App() {
             <h1 className="text-xl font-bold text-gray-900">⚓ 海运拼箱 Dashboard</h1>
             <p className="text-xs text-gray-400">实时追踪柜子装载、重量与收入情况</p>
           </div>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-600">👤 {displayName}</span>
-            <button onClick={logout} className="text-xs text-gray-400 hover:text-red-500 transition-colors">退出</button>
-          </div>
         </div>
       </header>
 
@@ -439,11 +396,7 @@ export default function App() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           <div><InputForm onSubmit={handleSubmit} /></div>
           <div className="lg:col-span-2">
-            {loading ? (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 text-center text-sm text-gray-400">加载中...</div>
-            ) : (
-              <RecordList records={records} onDelete={handleDelete} onUpdate={handleUpdate} />
-            )}
+            <RecordList records={records} onDelete={handleDelete} onUpdate={handleUpdate} />
           </div>
         </div>
 
