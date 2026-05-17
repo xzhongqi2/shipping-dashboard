@@ -1,4 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
+import { useRecords } from './hooks/useRecords'
+import { useClientId } from './hooks/useClientId'
 
 // ─────────────────────────────────
 // 柜子配置
@@ -82,7 +84,7 @@ function InputForm({ onSubmit }) {
   const [rev, setRev]     = useState('')
   const [msg, setMsg]     = useState('')
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault()
     if (!sales.trim())     { setMsg('⚠️ 请输入销售人员'); return }
     if (!name)             { setMsg('⚠️ 请选择柜子类型'); return }
@@ -90,9 +92,13 @@ function InputForm({ onSubmit }) {
     if (isNaN(c) || c < 0) { setMsg('⚠️ 请输入有效的CBM'); return }
     if (isNaN(k) || k < 0) { setMsg('⚠️ 请输入有效的KG');  return }
     if (isNaN(r) || r < 0) { setMsg('⚠️ 请输入有效的收入'); return }
-    onSubmit(sales.trim(), name, c, k, r)
-    setSales(''); setName(''); setCbm(''); setKg(''); setRev(''); setMsg('✅ 已添加')
-    setTimeout(() => setMsg(''), 2000)
+    try {
+      await onSubmit(sales.trim(), name, c, k, r)
+      setSales(''); setName(''); setCbm(''); setKg(''); setRev(''); setMsg('✅ 已添加')
+      setTimeout(() => setMsg(''), 2000)
+    } catch (err) {
+      setMsg('⚠️ 提交失败:' + err.message)
+    }
   }
 
   return (
@@ -137,7 +143,7 @@ function InputForm({ onSubmit }) {
 // ─────────────────────────────────
 // 组件：记录列表（可删除 / 可编辑）
 // ─────────────────────────────────
-function RecordList({ records, onDelete, onUpdate }) {
+function RecordList({ records, clientId, isAdmin, onDelete, onUpdate }) {
   const [editingId, setEditingId] = useState(null)
   const [edit, setEdit]           = useState({})
 
@@ -186,12 +192,14 @@ function RecordList({ records, onDelete, onUpdate }) {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium text-sm text-gray-800">{r.salesperson}</span>
                     <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{r.container}</span>
-                    <span className="text-xs text-gray-400">{fmtTime(r.created_at ?? r.time)}</span>
+                    <span className="text-xs text-gray-400">{fmtTime(r.created_at)}</span>
                   </div>
-                  <div className="flex gap-3">
-                    <button onClick={() => start(r)} className="text-xs text-blue-600 hover:text-blue-800">编辑</button>
-                    <button onClick={() => onDelete(r.id)}  className="text-xs text-red-500 hover:text-red-700">删除</button>
-                  </div>
+                  {(isAdmin || r.client_id === clientId) && (
+                    <div className="flex gap-3">
+                      <button onClick={() => start(r)} className="text-xs text-blue-600 hover:text-blue-800">编辑</button>
+                      <button onClick={() => onDelete(r.id)}  className="text-xs text-red-500 hover:text-red-700">删除</button>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-3 gap-4 text-xs text-gray-500">
                   <span>CBM: {r.cbm}</span>
@@ -315,73 +323,46 @@ function Auth({ onLogin }) {
 // 主 App（无需登录）
 // ─────────────────────────────────
 export default function App() {
-  const [state,  setState]  = useState(EMPTY_STATE)
-  const [records, setRecords] = useState([])
+  const clientId = useClientId()
+  const { records, add, update, remove } = useRecords()
 
-  // ── 添加记录 ──
-  const handleSubmit = useCallback((salesperson, container, cbm, kg, revenue) => {
-    const newRecord = {
-      id: Date.now(),
-      salesperson,
-      container,
-      cbm,
-      kg,
-      revenue,
-      created_at: new Date().toISOString(),
-    }
-    setRecords(prev => [newRecord, ...prev])
-    setState(prev => ({
-      ...prev,
-      [container]: {
-        cbm:     prev[container].cbm     + cbm,
-        kg:      prev[container].kg      + kg,
-        revenue: prev[container].revenue + revenue,
-      }
-    }))
-  }, [])
-
-  // ── 删除记录 ──
-  const handleDelete = useCallback((id) => {
-    const record = records.find(r => r.id === id)
-    if (!record) return
-    setRecords(prev => prev.filter(r => r.id !== id))
-    setState(prev => ({
-      ...prev,
-      [record.container]: {
-        cbm:     prev[record.container].cbm     - record.cbm,
-        kg:      prev[record.container].kg      - record.kg,
-        revenue: prev[record.container].revenue - record.revenue,
-      }
-    }))
-  }, [records])
-
-  // ── 更新记录 ──
-  const handleUpdate = useCallback((id, updated) => {
-    const old = records.find(r => r.id === id)
-    if (!old) return
-    const newData = {
-      ...old,
-      salesperson: updated.salesperson,
-      container:   updated.container,
-      cbm:         parseFloat(updated.cbm) || 0,
-      kg:          parseFloat(updated.kg)  || 0,
-      revenue:     parseFloat(updated.revenue) || 0,
-    }
-    const newRecords = records.map(r => r.id === id ? newData : r)
-    setRecords(newRecords)
-    // 刷新汇总
-    const s = { ...EMPTY_STATE }
-    newRecords.forEach(r => {
-      s[r.container].cbm     += r.cbm
-      s[r.container].kg      += r.kg
-      s[r.container].revenue += r.revenue
+  const state = useMemo(() => {
+    const s = {}
+    CONTAINERS.forEach(c => { s[c.name] = { cbm: 0, kg: 0, revenue: 0 } })
+    records.forEach(r => {
+      if (!s[r.container]) return
+      s[r.container].cbm     += Number(r.cbm)
+      s[r.container].kg      += Number(r.kg)
+      s[r.container].revenue += Number(r.revenue)
     })
-    setState(s)
+    return s
   }, [records])
+
+  const handleSubmit = useCallback(async (salesperson, container, cbm, kg, revenue) => {
+    await add({ salesperson, container, cbm, kg, revenue, client_id: clientId })
+  }, [add, clientId])
+
+  const handleDelete = useCallback(async (id) => {
+    try { await remove(id) }
+    catch (e) { alert('删除失败:' + e.message) }
+  }, [remove])
+
+  const handleUpdate = useCallback(async (id, updated) => {
+    try {
+      await update(id, {
+        salesperson: updated.salesperson,
+        container:   updated.container,
+        cbm:         parseFloat(updated.cbm) || 0,
+        kg:          parseFloat(updated.kg)  || 0,
+        revenue:     parseFloat(updated.revenue) || 0,
+      })
+    } catch (e) {
+      alert('更新失败:' + e.message)
+    }
+  }, [update])
 
   return (
     <div className="min-h-screen bg-gray-50/80">
-      {/* 顶部导航 */}
       <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
           <div>
@@ -392,18 +373,21 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
-        {/* 输入区 + 记录列表 */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           <div><InputForm onSubmit={handleSubmit} /></div>
           <div className="lg:col-span-2">
-            <RecordList records={records} onDelete={handleDelete} onUpdate={handleUpdate} />
+            <RecordList
+              records={records}
+              clientId={clientId}
+              isAdmin={false}
+              onDelete={handleDelete}
+              onUpdate={handleUpdate}
+            />
           </div>
         </div>
 
-        {/* 汇总 */}
         <div className="mb-6"><Summary state={state} /></div>
 
-        {/* 五个柜子看板 */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
           {CONTAINERS.map(config => (
             <ContainerCard key={config.name} config={config} data={state[config.name]} />
