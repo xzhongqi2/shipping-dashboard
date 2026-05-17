@@ -6,23 +6,28 @@ const POLL_INTERVAL_MS = 30_000
 export function useRecords() {
   const [records, setRecords] = useState([])
 
-  const fetchAll = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('records')
-      .select('*')
-      .order('created_at', { ascending: false })
-    if (error) {
-      console.warn('[useRecords] fetch failed:', error.message)
-      return
-    }
-    setRecords(data ?? [])
-  }, [])
-
   useEffect(() => {
-    fetchAll()
-    const id = setInterval(fetchAll, POLL_INTERVAL_MS)
-    return () => clearInterval(id)
-  }, [fetchAll])
+    let cancelled = false
+
+    const tick = () => {
+      supabase
+        .from('records')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .then(({ data, error }) => {
+          if (cancelled) return
+          if (error) {
+            console.warn('[useRecords] fetch failed:', error.message)
+            return
+          }
+          setRecords(data ?? [])
+        })
+    }
+
+    tick()
+    const id = setInterval(tick, POLL_INTERVAL_MS)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [])
 
   const add = useCallback(async (newRecord) => {
     const { data, error } = await supabase
@@ -53,5 +58,5 @@ export function useRecords() {
     setRecords(prev => prev.filter(r => r.id !== id))
   }, [])
 
-  return { records, add, update, remove, refetch: fetchAll }
+  return { records, add, update, remove }
 }

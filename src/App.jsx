@@ -1,16 +1,17 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useRecords } from './hooks/useRecords'
 import { useClientId } from './hooks/useClientId'
+import { useAdmin } from './hooks/useAdmin'
 
 // ─────────────────────────────────
 // 柜子配置
 // ─────────────────────────────────
 const CONTAINERS = [
-  { name: '美西',   capacityCBM: 70, capacityKG: 12000, cost: 62243 },
-  { name: '美中南', capacityCBM: 70, capacityKG: 12000, cost: 66734 },
-  { name: '美中北', capacityCBM: 70, capacityKG: 12000, cost: 69259 },
-  { name: '美东南', capacityCBM: 70, capacityKG: 12000, cost: 63845 },
-  { name: '美东北', capacityCBM: 70, capacityKG: 12000, cost: 69259 },
+  { name: '美西',   capacityCBM: 70, capacityKG: 12000 },
+  { name: '美中南', capacityCBM: 70, capacityKG: 12000 },
+  { name: '美中北', capacityCBM: 70, capacityKG: 12000 },
+  { name: '美东南', capacityCBM: 70, capacityKG: 12000 },
+  { name: '美东北', capacityCBM: 70, capacityKG: 12000 },
 ]
 
 const EMPTY_STATE = {}
@@ -43,18 +44,20 @@ function RateBadge({ value, label }) {
 // ─────────────────────────────────
 // 组件：柜子卡片
 // ─────────────────────────────────
-function ContainerCard({ config, data }) {
+function ContainerCard({ config, data, cost }) {
   const loadRate    = data.cbm / config.capacityCBM
   const weightRate  = data.kg  / config.capacityKG
-  const revenueRate = data.revenue / config.cost
+  const revenueRate = cost ? data.revenue / cost : null
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-gray-800">{config.name}</h3>
-        <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded">
-          成本 ¥{config.cost.toLocaleString()}
-        </span>
+        {cost && (
+          <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded">
+            成本 ¥{cost.toLocaleString()}
+          </span>
+        )}
       </div>
       <div className="grid grid-cols-3 gap-3 mb-4">
         <div className="text-center"><p className="text-xs text-gray-400">CBM</p>
@@ -67,7 +70,7 @@ function ContainerCard({ config, data }) {
       <div className="flex justify-around border-t border-gray-100 pt-4">
         <RateBadge value={loadRate}   label="装载率" />
         <RateBadge value={weightRate} label="重量率" />
-        <RateBadge value={revenueRate} label="收入率" />
+        {revenueRate !== null && <RateBadge value={revenueRate} label="收入率" />}
       </div>
     </div>
   )
@@ -218,22 +221,26 @@ function RecordList({ records, clientId, isAdmin, onDelete, onUpdate }) {
 // ─────────────────────────────────
 // 组件：数据汇总
 // ─────────────────────────────────
-function Summary({ state }) {
+function Summary({ state, costs }) {
   const totalCBM    = CONTAINERS.reduce((s, c) => s + state[c.name].cbm, 0)
   const totalKG     = CONTAINERS.reduce((s, c) => s + state[c.name].kg, 0)
   const totalRev    = CONTAINERS.reduce((s, c) => s + state[c.name].revenue, 0)
-  const capCBM     = CONTAINERS.reduce((s, c) => s + c.capacityCBM, 0)
-  const capKG      = CONTAINERS.reduce((s, c) => s + c.capacityKG, 0)
-  const totalCost  = CONTAINERS.reduce((s, c) => s + c.cost, 0)
+  const capCBM      = CONTAINERS.reduce((s, c) => s + c.capacityCBM, 0)
+  const capKG       = CONTAINERS.reduce((s, c) => s + c.capacityKG, 0)
+  const totalCost   = costs ? CONTAINERS.reduce((s, c) => s + (costs[c.name] || 0), 0) : 0
+
   const items = [
-    { label: '总装载率', value: totalCBM / capCBM,   detail: `${totalCBM} / ${capCBM} CBM` },
-    { label: '总重量率', value: totalKG  / capKG,    detail: `${totalKG.toLocaleString()} / ${capKG.toLocaleString()} KG` },
-    { label: '总收入率', value: totalRev / totalCost,  detail: `¥${totalRev.toLocaleString()} / ¥${totalCost.toLocaleString()}` },
+    { label: '总装载率', value: totalCBM / capCBM, detail: `${totalCBM} / ${capCBM} CBM` },
+    { label: '总重量率', value: totalKG  / capKG,  detail: `${totalKG.toLocaleString()} / ${capKG.toLocaleString()} KG` },
   ]
+  if (costs && totalCost > 0) {
+    items.push({ label: '总收入率', value: totalRev / totalCost, detail: `¥${totalRev.toLocaleString()} / ¥${totalCost.toLocaleString()}` })
+  }
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
       <h3 className="text-base font-semibold text-gray-800 mb-4">数据汇总</h3>
-      <div className="grid grid-cols-3 gap-4">
+      <div className={`grid gap-4 ${items.length === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
         {items.map(item => {
           const good = item.value >= 1
           return (
@@ -248,6 +255,65 @@ function Summary({ state }) {
         })}
       </div>
     </div>
+  )
+}
+
+// ─────────────────────────────────
+// 组件：管理员入口按钮
+// ─────────────────────────────────
+function AdminButton({ isAdmin, onLogin, onLogout }) {
+  const [open, setOpen] = useState(false)
+  const [pw, setPw]     = useState('')
+  const [err, setErr]   = useState('')
+  const [busy, setBusy] = useState(false)
+
+  if (isAdmin) {
+    return (
+      <button onClick={onLogout}
+        className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg">
+        退出管理员
+      </button>
+    )
+  }
+
+  const submit = async (e) => {
+    e.preventDefault()
+    setErr(''); setBusy(true)
+    try {
+      await onLogin(pw)
+      setOpen(false); setPw('')
+    } catch {
+      setErr('密码错误')
+    }
+    setBusy(false)
+  }
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg">
+        管理员
+      </button>
+      {open && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-20" onClick={() => setOpen(false)}>
+          <form onSubmit={submit} onClick={e => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-lg p-6 w-80">
+            <h3 className="text-base font-semibold text-gray-800 mb-4">管理员登录</h3>
+            <input type="password" value={pw} onChange={e => setPw(e.target.value)} autoFocus placeholder="管理员密码"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 mb-3" />
+            {err && <p className="text-sm text-red-500 mb-2">{err}</p>}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setOpen(false)}
+                className="text-xs text-gray-500 hover:text-gray-700 px-3 py-1.5">取消</button>
+              <button type="submit" disabled={busy}
+                className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg disabled:opacity-50">
+                {busy ? '验证中...' : '登录'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -325,6 +391,7 @@ function Auth({ onLogin }) {
 export default function App() {
   const clientId = useClientId()
   const { records, add, update, remove } = useRecords()
+  const { isAdmin, costs, login, logout, updateCost } = useAdmin()
 
   const state = useMemo(() => {
     const s = {}
@@ -369,6 +436,7 @@ export default function App() {
             <h1 className="text-xl font-bold text-gray-900">⚓ 海运拼箱 Dashboard</h1>
             <p className="text-xs text-gray-400">实时追踪柜子装载、重量与收入情况</p>
           </div>
+          <AdminButton isAdmin={isAdmin} onLogin={login} onLogout={logout} />
         </div>
       </header>
 
@@ -379,18 +447,23 @@ export default function App() {
             <RecordList
               records={records}
               clientId={clientId}
-              isAdmin={false}
+              isAdmin={isAdmin}
               onDelete={handleDelete}
               onUpdate={handleUpdate}
             />
           </div>
         </div>
 
-        <div className="mb-6"><Summary state={state} /></div>
+        <div className="mb-6"><Summary state={state} costs={isAdmin ? costs : null} /></div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
           {CONTAINERS.map(config => (
-            <ContainerCard key={config.name} config={config} data={state[config.name]} />
+            <ContainerCard
+              key={config.name}
+              config={config}
+              data={state[config.name]}
+              cost={isAdmin ? costs[config.name] : null}
+            />
           ))}
         </div>
       </main>
