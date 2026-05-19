@@ -32,5 +32,5 @@ export function useAdmin() {
     setCosts(prev => ({ ...prev, [container]: Number(cost) }))
   }, [password])
 
-  return { isAdmin, costs, login, logout, updateCost }
+  return { isAdmin, costs, password, login, logout, updateCost }
 }

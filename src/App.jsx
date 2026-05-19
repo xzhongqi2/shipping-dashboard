@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from 'react'
 import { useRecords } from './hooks/useRecords'
 import { useClientId } from './hooks/useClientId'
 import { useAdmin } from './hooks/useAdmin'
+import { useWeek } from './hooks/useWeek'
 
 // ─────────────────────────────────
 // 柜子配置
@@ -77,7 +78,7 @@ function ContainerCard({ config, data, cost }) {
 // ─────────────────────────────────
 // 组件：输入表单
 // ────────────────────────────────
-function InputForm({ onSubmit }) {
+function InputForm({ onSubmit, disabled, currentWeek, selectedWeek }) {
   const [sales, setSales] = useState('')
   const [name, setName]   = useState('')
   const [cbm, setCbm]     = useState('')
@@ -105,6 +106,11 @@ function InputForm({ onSubmit }) {
   return (
     <form onSubmit={submit} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
       <h3 className="text-base font-semibold text-gray-800 mb-4">录入数据</h3>
+      {disabled && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2 mb-4 text-xs text-yellow-700">
+          查看历史 (Wk{selectedWeek}),录入功能仅在 Wk{currentWeek} (本周) 可用
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-4">
         <div className="col-span-2">
           <label className="block text-xs text-gray-500 mb-1">销售人员</label>
@@ -133,8 +139,9 @@ function InputForm({ onSubmit }) {
       <div className="flex items-center justify-between mt-5">
         {msg && <span className={`text-sm ${msg.startsWith('✅') ? 'text-green-600' : 'text-red-500'}`}>{msg}</span>}
         {!msg && <span />}
-        <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-6 py-2 rounded-lg transition-colors">
-          添加
+        <button type="submit" disabled={disabled || !currentWeek}
+          className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-6 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          {!currentWeek ? '加载中...' : '添加'}
         </button>
       </div>
     </form>
@@ -219,7 +226,7 @@ function RecordList({ records, clientId, isAdmin, onDelete, onUpdate }) {
 // ─────────────────────────────────
 // 组件：数据汇总
 // ─────────────────────────────────
-function Summary({ state, costs }) {
+function Summary({ state, costs, selectedWeek, currentWeek, weeksWithData, onWeekChange }) {
   const totalCBM    = CONTAINERS.reduce((s, c) => s + state[c.name].cbm, 0)
   const totalKG     = CONTAINERS.reduce((s, c) => s + state[c.name].kg, 0)
   const totalRev    = CONTAINERS.reduce((s, c) => s + state[c.name].revenue, 0)
@@ -237,7 +244,15 @@ function Summary({ state, costs }) {
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-      <h3 className="text-base font-semibold text-gray-800 mb-4">数据汇总</h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-base font-semibold text-gray-800">数据汇总</h3>
+        <WeekSelector
+          selectedWeek={selectedWeek}
+          currentWeek={currentWeek}
+          weeksWithData={weeksWithData}
+          onChange={onWeekChange}
+        />
+      </div>
       <div className={`grid gap-4 ${items.length === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
         {items.map(item => {
           const good = item.value >= 1
@@ -251,6 +266,136 @@ function Summary({ state, costs }) {
             </div>
           )
         })}
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────
+// 组件：周选择器
+// ─────────────────────────────────
+function WeekSelector({ selectedWeek, currentWeek, weeksWithData, onChange }) {
+  return (
+    <select
+      value={selectedWeek ?? ''}
+      onChange={e => onChange(Number(e.target.value))}
+      className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300"
+    >
+      {Array.from({ length: 52 }, (_, i) => i + 1).map(w => (
+        <option key={w} value={w} className={weeksWithData.has(w) ? 'text-red-600 font-semibold' : 'text-gray-400'}>
+          Wk{w}{w === currentWeek ? ' (本周)' : ''}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+// ─────────────────────────────────
+// 组件：进入下一周按钮
+// ─────────────────────────────────
+function NextWeekButton({ currentWeek, password, onAdvance }) {
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const handleConfirm = async () => {
+    setBusy(true)
+    try {
+      await onAdvance(password)
+      setConfirming(false)
+    } catch (e) {
+      alert('推进失败:' + e.message)
+    }
+    setBusy(false)
+  }
+
+  return (
+    <>
+      <button onClick={() => setConfirming(true)}
+        className="text-xs text-orange-600 hover:text-orange-800 border border-orange-200 px-3 py-1.5 rounded-lg mr-2">
+        进入下一周
+      </button>
+      {confirming && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-20" onClick={() => setConfirming(false)}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-lg p-6 w-80">
+            <h3 className="text-base font-semibold text-gray-800 mb-3">确认进入下一周</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              确定从 Wk{currentWeek} 进入 Wk{currentWeek + 1} 吗?Wk{currentWeek} 数据将归档保留。
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirming(false)} className="text-xs text-gray-500 hover:text-gray-700 px-3 py-1.5">取消</button>
+              <button onClick={handleConfirm} disabled={busy}
+                className="text-xs bg-orange-600 hover:bg-orange-700 text-white px-4 py-1.5 rounded-lg disabled:opacity-50">
+                {busy ? '处理中...' : '确认'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ─────────────────────────────────
+// 组件：周汇总表
+// ─────────────────────────────────
+function WeekSummaryTable({ records, costs, isAdmin, onSelectWeek }) {
+  const weekGroups = useMemo(() => {
+    const groups = {}
+    records.forEach(r => {
+      if (!r.week_number) return
+      if (!groups[r.week_number]) groups[r.week_number] = { cbm: 0, kg: 0, revenue: 0 }
+      groups[r.week_number].cbm     += Number(r.cbm)
+      groups[r.week_number].kg      += Number(r.kg)
+      groups[r.week_number].revenue += Number(r.revenue)
+    })
+    return groups
+  }, [records])
+
+  const capCBM  = CONTAINERS.reduce((s, c) => s + c.capacityCBM, 0)
+  const capKG   = CONTAINERS.reduce((s, c) => s + c.capacityKG, 0)
+  const totalCost = isAdmin && costs ? CONTAINERS.reduce((s, c) => s + (costs[c.name] || 0), 0) : 0
+
+  const weeks = Object.keys(weekGroups).map(Number).sort((a, b) => a - b)
+
+  if (weeks.length === 0) return null
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mt-6">
+      <h3 className="text-base font-semibold text-gray-800 mb-4">周汇总</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100">
+              <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium">周</th>
+              <th className="text-center py-2 px-3 text-xs text-gray-500 font-medium">总装载率</th>
+              <th className="text-center py-2 px-3 text-xs text-gray-500 font-medium">总重量率</th>
+              <th className="text-center py-2 px-3 text-xs text-gray-500 font-medium">总收入率</th>
+            </tr>
+          </thead>
+          <tbody>
+            {weeks.map(w => {
+              const g = weekGroups[w]
+              const loadRate = g.cbm / capCBM
+              const weightRate = g.kg / capKG
+              const revenueRate = totalCost > 0 ? g.revenue / totalCost : null
+              return (
+                <tr key={w} onClick={() => onSelectWeek(w)}
+                  className="border-b border-gray-50 hover:bg-blue-50 cursor-pointer transition-colors">
+                  <td className="py-2 px-3 font-medium text-gray-800">Wk{w}</td>
+                  <td className={`py-2 px-3 text-center font-medium ${loadRate >= 1 ? 'text-green-600' : 'text-red-500'}`}>
+                    {(loadRate * 100).toFixed(1)}%
+                  </td>
+                  <td className={`py-2 px-3 text-center font-medium ${weightRate >= 1 ? 'text-green-600' : 'text-red-500'}`}>
+                    {(weightRate * 100).toFixed(1)}%
+                  </td>
+                  <td className={`py-2 px-3 text-center font-medium ${revenueRate === null ? 'text-gray-400' : revenueRate >= 1 ? 'text-green-600' : 'text-red-500'}`}>
+                    {revenueRate === null ? '--' : `${(revenueRate * 100).toFixed(1)}%`}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   )
@@ -380,23 +525,30 @@ function AdminButton({ isAdmin, onLogin, onLogout }) {
 export default function App() {
   const clientId = useClientId()
   const { records, add, update, remove } = useRecords()
-  const { isAdmin, costs, login, logout, updateCost } = useAdmin()
+  const { isAdmin, costs, password, login, logout, updateCost } = useAdmin()
+  const { currentWeek, selectedWeek, setSelectedWeek, advance } = useWeek()
 
   const state = useMemo(() => {
     const s = {}
     CONTAINERS.forEach(c => { s[c.name] = { cbm: 0, kg: 0, revenue: 0 } })
-    records.forEach(r => {
+    records.filter(r => r.week_number === selectedWeek).forEach(r => {
       if (!s[r.container]) return
       s[r.container].cbm     += Number(r.cbm)
       s[r.container].kg      += Number(r.kg)
       s[r.container].revenue += Number(r.revenue)
     })
     return s
+  }, [records, selectedWeek])
+
+  const weeksWithData = useMemo(() => {
+    const s = new Set()
+    records.forEach(r => { if (r.week_number) s.add(r.week_number) })
+    return s
   }, [records])
 
   const handleSubmit = useCallback(async (salesperson, container, cbm, kg, revenue) => {
-    await add({ salesperson, container, cbm, kg, revenue, client_id: clientId })
-  }, [add, clientId])
+    await add({ salesperson, container, cbm, kg, revenue, client_id: clientId, week_number: currentWeek })
+  }, [add, clientId, currentWeek])
 
   const handleDelete = useCallback(async (id) => {
     try { await remove(id) }
@@ -425,13 +577,16 @@ export default function App() {
             <h1 className="text-xl font-bold text-gray-900">⚓ 海运拼箱 Dashboard</h1>
             <p className="text-xs text-gray-400">实时追踪柜子装载、重量与收入情况</p>
           </div>
-          <AdminButton isAdmin={isAdmin} onLogin={login} onLogout={logout} />
+          <div className="flex items-center">
+            {isAdmin && <NextWeekButton currentWeek={currentWeek} password={password} onAdvance={advance} />}
+            <AdminButton isAdmin={isAdmin} onLogin={login} onLogout={logout} />
+          </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          <div><InputForm onSubmit={handleSubmit} /></div>
+          <div><InputForm onSubmit={handleSubmit} disabled={selectedWeek !== currentWeek} currentWeek={currentWeek} selectedWeek={selectedWeek} /></div>
           <div className="lg:col-span-2">
             <RecordList
               records={records}
@@ -445,7 +600,16 @@ export default function App() {
 
         {isAdmin && <CostConfigPanel costs={costs} onUpdate={updateCost} />}
 
-        <div className="mb-6"><Summary state={state} costs={isAdmin ? costs : null} /></div>
+        <div className="mb-6">
+          <Summary
+            state={state}
+            costs={isAdmin ? costs : null}
+            selectedWeek={selectedWeek}
+            currentWeek={currentWeek}
+            weeksWithData={weeksWithData}
+            onWeekChange={setSelectedWeek}
+          />
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
           {CONTAINERS.map(config => (
@@ -457,6 +621,13 @@ export default function App() {
             />
           ))}
         </div>
+
+        <WeekSummaryTable
+          records={records}
+          costs={isAdmin ? costs : null}
+          isAdmin={isAdmin}
+          onSelectWeek={setSelectedWeek}
+        />
       </main>
     </div>
   )
