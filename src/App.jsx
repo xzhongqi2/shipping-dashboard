@@ -8,11 +8,12 @@ import { useWeek } from './hooks/useWeek'
 // 柜子配置
 // ─────────────────────────────────
 const CONTAINERS = [
-  { name: '美西',   capacityCBM: 70, capacityKG: 12000 },
-  { name: '美中南', capacityCBM: 70, capacityKG: 12000 },
-  { name: '美中北', capacityCBM: 70, capacityKG: 12000 },
-  { name: '美东南', capacityCBM: 70, capacityKG: 12000 },
-  { name: '美东北', capacityCBM: 70, capacityKG: 12000 },
+  { name: '美西',   capacityCBM: 70, capacityKG: 19500 },
+  { name: '美中南', capacityCBM: 70, capacityKG: 19500 },
+  { name: '美中北', capacityCBM: 70, capacityKG: 19500 },
+  { name: '美东南', capacityCBM: 70, capacityKG: 19500 },
+  { name: '美东北', capacityCBM: 70, capacityKG: 19500 },
+  { name: '锁仓柜', capacityCBM: 70, capacityKG: 19500 },
 ]
 
 
@@ -126,14 +127,14 @@ function InputForm({ onSubmit, disabled, currentWeek, selectedWeek }) {
           </select>
         </div>
         <div><label className="block text-xs text-gray-500 mb-1">CBM</label>
-          <input type="number" step="0.1" min="0" value={cbm} onChange={e => setCbm(e.target.value)} placeholder="0"
+          <input type="number" step="0.01" min="0" value={cbm} onChange={e => setCbm(e.target.value)} placeholder="0"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" /></div>
         <div><label className="block text-xs text-gray-500 mb-1">KG</label>
-          <input type="number" step="1"   min="0" value={kg}  onChange={e => setKg(e.target.value)}  placeholder="0"
+          <input type="number" step="0.01" min="0" value={kg}  onChange={e => setKg(e.target.value)}  placeholder="0"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" /></div>
         <div className="col-span-2">
           <label className="block text-xs text-gray-500 mb-1">收入金额 (¥)</label>
-          <input type="number" step="1"   min="0" value={rev} onChange={e => setRev(e.target.value)} placeholder="0"
+          <input type="number" step="0.01" min="0" value={rev} onChange={e => setRev(e.target.value)} placeholder="0"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" /></div>
       </div>
       <div className="flex items-center justify-between mt-5">
@@ -182,11 +183,11 @@ function RecordList({ records, clientId, isAdmin, onDelete, onUpdate }) {
                     className="border rounded px-2 py-1 text-sm bg-white">
                     {CONTAINERS.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
                   </select>
-                  <input type="number"  value={edit.revenue}   onChange={e => setEdit({ ...edit, revenue: e.target.value })} className="border rounded px-2 py-1 text-sm" />
+                  <input type="number" step="0.01" value={edit.revenue}   onChange={e => setEdit({ ...edit, revenue: e.target.value })} className="border rounded px-2 py-1 text-sm" />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <input type="number"  value={edit.cbm}       onChange={e => setEdit({ ...edit, cbm: e.target.value })} className="border rounded px-2 py-1 text-sm" placeholder="CBM" />
-                  <input type="number"  value={edit.kg}        onChange={e => setEdit({ ...edit, kg: e.target.value })}  className="border rounded px-2 py-1 text-sm" placeholder="KG"  />
+                  <input type="number" step="0.01" value={edit.cbm}       onChange={e => setEdit({ ...edit, cbm: e.target.value })} className="border rounded px-2 py-1 text-sm" placeholder="CBM" />
+                  <input type="number" step="0.01" value={edit.kg}        onChange={e => setEdit({ ...edit, kg: e.target.value })}  className="border rounded px-2 py-1 text-sm" placeholder="KG"  />
                 </div>
                 <div className="flex justify-end gap-2 mt-2">
                   <button onClick={cancel} className="text-xs text-gray-500 hover:text-gray-700 px-3 py-1">取消</button>
@@ -430,13 +431,13 @@ function CostConfigPanel({ costs, onUpdate }) {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
       <h3 className="text-base font-semibold text-gray-800 mb-4">成本配置 (仅管理员可见)</h3>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {CONTAINERS.map(c => (
           <div key={c.name} className="border border-gray-100 rounded-lg p-3">
             <p className="text-xs text-gray-500 mb-1">{c.name}</p>
             {editing === c.name ? (
               <div>
-                <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
+                <input type="number" step="0.01" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
                   className="w-full border border-gray-200 rounded px-2 py-1 text-sm" />
                 <div className="flex gap-2 mt-2">
                   <button onClick={save} disabled={busy}
@@ -611,7 +612,7 @@ export default function App() {
           />
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
           {CONTAINERS.map(config => (
             <ContainerCard
               key={config.name}
