@@ -79,7 +79,7 @@ function ContainerCard({ config, data, cost }) {
 // ─────────────────────────────────
 // 组件：输入表单
 // ────────────────────────────────
-function InputForm({ onSubmit, disabled, currentWeek, selectedWeek }) {
+function InputForm({ onSubmit, disabled, isAdmin, currentWeek, selectedWeek }) {
   const [sales, setSales] = useState('')
   const [name, setName]   = useState('')
   const [cbm, setCbm]     = useState('')
@@ -110,6 +110,11 @@ function InputForm({ onSubmit, disabled, currentWeek, selectedWeek }) {
       {disabled && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2 mb-4 text-xs text-yellow-700">
           查看历史 (Wk{selectedWeek}),录入功能仅在 Wk{currentWeek} (本周) 可用
+        </div>
+      )}
+      {!disabled && isAdmin && selectedWeek !== currentWeek && (
+        <div className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 mb-4 text-xs text-orange-700">
+          管理员模式:数据将录入到 Wk{selectedWeek}(非本周)
         </div>
       )}
       <div className="grid grid-cols-2 gap-4">
@@ -548,8 +553,9 @@ export default function App() {
   }, [records])
 
   const handleSubmit = useCallback(async (salesperson, container, cbm, kg, revenue) => {
-    await add({ salesperson, container, cbm, kg, revenue, client_id: clientId, week_number: currentWeek })
-  }, [add, clientId, currentWeek])
+    const targetWeek = isAdmin ? selectedWeek : currentWeek
+    await add({ salesperson, container, cbm, kg, revenue, client_id: clientId, week_number: targetWeek })
+  }, [add, clientId, currentWeek, selectedWeek, isAdmin])
 
   const handleDelete = useCallback(async (id) => {
     try { await remove(id) }
@@ -587,7 +593,7 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          <div><InputForm onSubmit={handleSubmit} disabled={selectedWeek !== currentWeek} currentWeek={currentWeek} selectedWeek={selectedWeek} /></div>
+          <div><InputForm onSubmit={handleSubmit} disabled={!isAdmin && selectedWeek !== currentWeek} isAdmin={isAdmin} currentWeek={currentWeek} selectedWeek={selectedWeek} /></div>
           <div className="lg:col-span-2">
             <RecordList
               records={records}
