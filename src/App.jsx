@@ -61,11 +61,11 @@ function ContainerCard({ config, data, cost }) {
       </div>
       <div className="grid grid-cols-3 gap-3 mb-4">
         <div className="text-center"><p className="text-xs text-gray-400">CBM</p>
-          <p className="text-sm font-medium text-gray-700">{data.cbm} <span className="text-xs text-gray-400">/ {config.capacityCBM}</span></p></div>
+          <p className="text-sm font-medium text-gray-700">{data.cbm.toFixed(2)} <span className="text-xs text-gray-400">/ {config.capacityCBM}</span></p></div>
         <div className="text-center"><p className="text-xs text-gray-400">KG</p>
-          <p className="text-sm font-medium text-gray-700">{data.kg.toLocaleString()} <span className="text-xs text-gray-400">/ {config.capacityKG.toLocaleString()}</span></p></div>
+          <p className="text-sm font-medium text-gray-700">{data.kg.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="text-xs text-gray-400">/ {config.capacityKG.toLocaleString()}</span></p></div>
         <div className="text-center"><p className="text-xs text-gray-400">收入</p>
-          <p className="text-sm font-medium text-gray-700">¥{data.revenue.toLocaleString()}</p></div>
+          <p className="text-sm font-medium text-gray-700">¥{data.revenue.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p></div>
       </div>
       <div className="flex justify-around border-t border-gray-100 pt-4">
         <RateBadge value={loadRate}   label="装载率" />
@@ -211,9 +211,9 @@ function RecordList({ records, clientId, isAdmin, onDelete, onUpdate }) {
                   )}
                 </div>
                 <div className="grid grid-cols-3 gap-4 text-xs text-gray-500">
-                  <span>CBM: {r.cbm}</span>
-                  <span>KG: {r.kg.toLocaleString()}</span>
-                  <span>收入: ¥{r.revenue.toLocaleString()}</span>
+                  <span>CBM: {Number(r.cbm).toFixed(2)}</span>
+                  <span>KG: {Number(r.kg).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                  <span>收入: ¥{Number(r.revenue).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                 </div>
               </div>
             )}
@@ -236,11 +236,11 @@ function Summary({ state, costs, selectedWeek, currentWeek, weeksWithData, onWee
   const totalCost   = costs ? CONTAINERS.reduce((s, c) => s + (costs[c.name] || 0), 0) : 0
 
   const items = [
-    { label: '总装载率', value: totalCBM / capCBM, detail: `${totalCBM} / ${capCBM} CBM` },
-    { label: '总重量率', value: totalKG  / capKG,  detail: `${totalKG.toLocaleString()} / ${capKG.toLocaleString()} KG` },
+    { label: '总装载率', value: totalCBM / capCBM, detail: `${totalCBM.toFixed(2)} / ${capCBM} CBM` },
+    { label: '总重量率', value: totalKG  / capKG,  detail: `${totalKG.toLocaleString(undefined, { maximumFractionDigits: 2 })} / ${capKG.toLocaleString()} KG` },
   ]
   if (costs && totalCost > 0) {
-    items.push({ label: '总收入率', value: totalRev / totalCost, detail: `¥${totalRev.toLocaleString()} / ¥${totalCost.toLocaleString()}` })
+    items.push({ label: '总收入率', value: totalRev / totalCost, detail: `¥${totalRev.toLocaleString(undefined, { maximumFractionDigits: 2 })} / ¥${totalCost.toLocaleString(undefined, { maximumFractionDigits: 2 })}` })
   }
 
   return (
