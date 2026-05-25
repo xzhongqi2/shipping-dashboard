@@ -1,6 +1,6 @@
-# 设计文档:三站统一认证(Supabase 邮箱魔法链接)
+# 设计文档:三站统一认证(Supabase 邮箱魔法链接)+ 邀请码外部访客 + DDP 数据上云
 
-**日期:** 2026-05-24
+**日期:** 2026-05-24(2026-05-25 扩展)
 **作者:** Vincent Xing(口述需求)+ Claude(整理)
 **状态:** 待实施
 
@@ -399,7 +399,6 @@ DDP 当前数据存 localStorage,**这次不接 Supabase 数据存储**——这
 - 密码登录(磁链接已够用)
 - 忘记密码 / 改密码流程(没密码)
 - 用户头像上传
-- DDP 数据云同步(后续独立改动)
 - shipping `client_id` 移除(保留兜底,不冲突)
 
 ## 已确认决策记录
@@ -408,10 +407,433 @@ DDP 当前数据存 localStorage,**这次不接 Supabase 数据存储**——这
 |------|------|
 | 范围 | 三站共用一套账号 |
 | 注册方式 | Supabase 邮箱魔法链接(免密码) |
-| 邮箱白名单 | 仅 `@starlinkai-logistics.cn` |
+| 邮箱白名单 | `@starlinkai-logistics.cn`(staff 角色)+ 邀请码邮箱(viewer 角色) |
 | 留痕深度 | 方案 A(`created_by` / `updated_by` / `updated_at`) |
 | 历史数据 | 不回填 `created_by`,保持 NULL,UI 显示"未知" |
-| 三站 session 共享 | cookie domain `.starlinkailog.com` |
-| DDP 数据存储 | 本次仅改认证,数据继续 localStorage |
+| 三站 session 共享 | 各自 origin 独立 session |
+| DDP 数据存储 | **本次同时迁移到 Supabase**(随邀请码功能一起做) |
 | 现有匿名 client_id | 保留,与 created_by 共存 |
 | 现有 useAdmin 管理员密码 | 保留,与 Supabase Auth 正交 |
+| 邀请码方式 | URL 邀请链接 + 限定邮箱,一次性,30 天有效 |
+| viewer 可见范围 | 全部 DDP 数据(`shipments` 表 SELECT) |
+| viewer 不可见 | shipping 的 records 表(RLS 拦) |
+
+---
+
+## 扩展 §A — 邀请码与 viewer 角色
+
+### 角色模型
+
+`auth.users.raw_app_meta_data.role` 字段:
+
+| 值 | 来源 | 权限 |
+|----|------|------|
+| `staff` | `@starlinkai-logistics.cn` 邮箱登录 | shipping + DDP 全部读写 |
+| `viewer` | 邀请码登录 | 仅 DDP `shipments` 表 SELECT |
+
+`app_metadata` 由 Supabase Admin API 写入,客户端无法篡改 → 这是权限的安全来源。
+
+### invites 表
+
+```sql
+create table public.invites (
+  code        text primary key,
+  email       text not null,                              -- 限定哪个邮箱可以用
+  role        text not null default 'viewer'
+              check (role in ('viewer')),
+  scope       text not null default 'ddp',                -- 当前只 'ddp',预留扩展
+  created_by  uuid references auth.users(id),
+  created_at  timestamptz not null default now(),
+  expires_at  timestamptz not null default (now() + interval '30 days'),
+  used_at     timestamptz,
+  used_by     uuid references auth.users(id)
+);
+
+alter table public.invites enable row level security;
+
+-- 只有 staff 能看/建邀请码
+create policy "staff manage invites" on public.invites
+  for all to authenticated
+  using (auth.jwt()->'app_metadata'->>'role' = 'staff')
+  with check (auth.jwt()->'app_metadata'->>'role' = 'staff');
+```
+
+### 流程
+
+**staff 发邀请**:
+
+shipping 加一个"邀请管理"入口(管理员模式下可见,跟 CostConfigPanel 同一类):
+
+1. 输入对方邮箱 → 调 RPC `create_invite(target_email)` → 返回邀请码
+2. 页面拼好链接 `https://ddp.starlinkailog.com/?invite=<code>` → 一键复制按钮
+3. 列表展示已发出的邀请,显示状态(未使用 / 已使用 / 已过期)、复制链接、撤销
+
+```sql
+-- RPC: 生成邀请码(staff 限定)
+create or replace function public.create_invite(target_email text)
+returns table (code text, expires_at timestamptz)
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  new_code text;
+  uid uuid;
+begin
+  uid := auth.uid();
+  if (auth.jwt()->'app_metadata'->>'role') is distinct from 'staff' then
+    raise exception 'only staff can create invites';
+  end if;
+
+  -- 生成简短不可猜的 code(8 位 base32-like)
+  new_code := encode(gen_random_bytes(6), 'base64');
+  new_code := replace(replace(replace(new_code, '+', ''), '/', ''), '=', '');
+
+  insert into public.invites (code, email, created_by)
+    values (new_code, lower(target_email), uid);
+
+  return query select new_code, (now() + interval '30 days')::timestamptz;
+end;
+$$;
+
+grant execute on function public.create_invite(text) to authenticated;
+```
+
+**外部人接受邀请**:
+
+DDP `index.html` 启动时检测 URL 的 `?invite=xxx` 参数:
+
+1. 跳转到一个内嵌的"邀请页"(替换 AuthGate):
+   ```
+   星链智运邀请你查看 DDP 物流跟踪
+   请输入邀请对应的邮箱:[输入框]
+   [发送登录链接]
+   ```
+2. 提交后 DDP 调 RPC `validate_invite(code, email)` 校验:code 存在、未使用、未过期、email 匹配
+3. 校验通过 → 调 `signInWithOtp({ email })` 走 magic link
+4. 用户点邮件链接登录 → DDP 在 `onAuthStateChange` 中检测到 `?invite=xxx` 仍在 URL → 调 RPC `consume_invite(code)`:校验通过后把 invite 标记 used,把当前用户 `app_metadata.role` 设为 `'viewer'`
+
+```sql
+-- RPC: 校验邀请码(签发 magic link 之前)
+create or replace function public.validate_invite(p_code text, p_email text)
+returns boolean
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  inv public.invites;
+begin
+  select * into inv from public.invites where code = p_code;
+  if not found then return false; end if;
+  if inv.used_at is not null then return false; end if;
+  if inv.expires_at < now() then return false; end if;
+  if lower(inv.email) <> lower(p_email) then return false; end if;
+  return true;
+end;
+$$;
+
+grant execute on function public.validate_invite(text, text) to anon, authenticated;
+
+-- RPC: 消费邀请码 + 提升当前用户为 viewer(登录回调后调用)
+create or replace function public.consume_invite(p_code text)
+returns boolean
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  inv public.invites;
+  uid uuid;
+  current_email text;
+begin
+  uid := auth.uid();
+  if uid is null then return false; end if;
+
+  select * into inv from public.invites where code = p_code;
+  if not found or inv.used_at is not null or inv.expires_at < now() then
+    return false;
+  end if;
+
+  select email into current_email from auth.users where id = uid;
+  if lower(inv.email) <> lower(current_email) then return false; end if;
+
+  -- 标记 invite 已用
+  update public.invites
+    set used_at = now(), used_by = uid
+    where code = p_code;
+
+  -- 设置当前用户 role = viewer
+  update auth.users
+    set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb)
+                            || jsonb_build_object('role', 'viewer')
+    where id = uid;
+
+  return true;
+end;
+$$;
+
+grant execute on function public.consume_invite(text) to authenticated;
+```
+
+### Auth Hook 改进
+
+之前白名单仅放行 `@starlinkai-logistics.cn`。现在要放行**两类人**:
+
+- 邮箱在白名单 → 同时把 `role = 'staff'` 写入 `app_metadata`
+- 邮箱不在白名单 → 检查是否有未过期未使用的邀请码与该邮箱匹配 → 通过则放行(role 在 `consume_invite` 时设)
+
+```sql
+create or replace function public.before_user_created(event jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  email text;
+  has_invite boolean;
+begin
+  email := lower(event->'claims'->>'email');
+
+  -- 公司邮箱:直接放行,标记 staff
+  if email ~* '@starlinkai-logistics\.cn$' then
+    return jsonb_set(
+      event,
+      '{claims,app_metadata,role}',
+      to_jsonb('staff'::text)
+    );
+  end if;
+
+  -- 邀请码邮箱:有未消费且未过期的邀请才放行
+  select exists (
+    select 1 from public.invites
+    where lower(invites.email) = email
+      and used_at is null
+      and expires_at > now()
+  ) into has_invite;
+
+  if has_invite then
+    return event;  -- 放行,role 由 consume_invite 在登录后设置
+  end if;
+
+  return jsonb_build_object(
+    'error', jsonb_build_object(
+      'http_code', 403,
+      'message', '此邮箱无访问权限。请联系管理员获取邀请,或使用公司邮箱登录'
+    )
+  );
+end;
+$$;
+
+grant execute on function public.before_user_created(jsonb) to supabase_auth_admin;
+```
+
+### viewer UI 限制
+
+DDP 启动检测当前用户 role(从 `session.user.app_metadata.role`):
+
+- `staff`:正常 UI
+- `viewer`:
+  - 顶部加红色提示条"只读模式 — 您是受邀访客"
+  - 隐藏:`新增柜子` 按钮、所有行的 `编辑` `删除` 按钮、节点编辑入口、双击编辑事件
+  - 任何写入 RPC 调用都会被 RLS 拦截(双重保险)
+
+shipping `AuthGate` 检测 role:
+
+- `staff`:进入 dashboard
+- 其他(`viewer` / 无 role):显示"无权限,此页面仅限内部员工"
+
+主页 `auth-user-menu` 中,viewer 看到的 dashboard 链接只有 DDP,亚马逊拼柜入口隐藏。
+
+---
+
+## 扩展 §B — DDP 数据上云(shipments 表)
+
+### 表结构
+
+```sql
+create table public.shipments (
+  id            uuid primary key default gen_random_uuid(),
+  -- 顶层常用字段(便于过滤排序)
+  booking       text,
+  container     text,
+  shipper       text,
+  consignee     text,
+  origin_port   text,
+  dest_port     text,
+  goods         text,
+  ctns          numeric default 0,
+  volume        numeric default 0,
+  weight        numeric default 0,
+  dept          text,
+  -- 其他字段(seal、地址、工厂联系等)和 16 个节点状态用 JSONB
+  details       jsonb not null default '{}'::jsonb,
+  nodes         jsonb not null default '{}'::jsonb,
+  -- 审计
+  created_by    uuid references auth.users(id) on delete set null,
+  updated_by    uuid references auth.users(id) on delete set null,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+create index idx_shipments_created on public.shipments(created_at desc);
+create index idx_shipments_container on public.shipments(container);
+
+-- 复用 set_audit_fields trigger
+drop trigger if exists trg_shipments_audit on public.shipments;
+create trigger trg_shipments_audit
+  before insert or update on public.shipments
+  for each row execute function public.set_audit_fields();
+
+alter table public.shipments enable row level security;
+
+-- staff 全权
+create policy "staff full access shipments" on public.shipments
+  for all to authenticated
+  using (auth.jwt()->'app_metadata'->>'role' = 'staff')
+  with check (auth.jwt()->'app_metadata'->>'role' = 'staff');
+
+-- viewer 只读
+create policy "viewer read shipments" on public.shipments
+  for select to authenticated
+  using (auth.jwt()->'app_metadata'->>'role' = 'viewer');
+```
+
+### 为什么用 JSONB 存 details / nodes
+
+DDP 原数据有 20+ 字段(`shipperAddr`, `consigneeAddr`, `factoryName`, `factoryContact`, ...),`nodes` 是 16 个节点 × 3 字段(`status` / `date` / `note`)= 48 个字段。全拆成列要 alter table 30+ 次;以后改字段又要迁移。JSONB 让前端继续用现有数据形状(`shipmentData` 对象),序列化即写,反序列化即读,改字段无需 schema 变更。
+
+代价:不能直接用 SQL 索引节点状态做查询。但 DDP 列表过滤目前都在前端做,不影响。
+
+### DDP 代码改造
+
+替换数据层。原来的:
+
+```js
+// 旧
+let shipmentData = []
+shipmentData = JSON.parse(localStorage.getItem('ddp_tracking_data')) || sampleData
+```
+
+新的:
+
+```js
+// 新
+let shipmentData = []
+async function loadShipments() {
+  const { data, error } = await sb
+    .from('shipments')
+    .select('*')
+    .order('created_at', { ascending: false })
+  if (error) { console.error(error); return }
+  // 把 DB 行转回前端期望的扁平结构
+  shipmentData = data.map(row => ({
+    id: row.id,
+    booking: row.booking,
+    container: row.container,
+    seal: row.details?.seal,
+    shipper: row.shipper,
+    shipperAddr: row.details?.shipperAddr,
+    consignee: row.consignee,
+    consigneeAddr: row.details?.consigneeAddr,
+    factoryName: row.details?.factoryName,
+    factoryAddr: row.details?.factoryAddr,
+    factoryContact: row.details?.factoryContact,
+    tempContainer: row.details?.tempContainer,
+    originPort: row.origin_port,
+    destPort: row.dest_port,
+    destCity: row.details?.destCity,
+    destAddr: row.details?.destAddr,
+    goods: row.goods,
+    ctns: row.ctns,
+    volume: row.volume,
+    weight: row.weight,
+    dept: row.dept,
+    nodes: row.nodes || {},
+  }))
+}
+```
+
+写入对应:
+
+```js
+async function saveShipment(record, action) {
+  const payload = {
+    booking: record.booking,
+    container: record.container,
+    shipper: record.shipper,
+    consignee: record.consignee,
+    origin_port: record.originPort,
+    dest_port: record.destPort,
+    goods: record.goods,
+    ctns: Number(record.ctns) || 0,
+    volume: Number(record.volume) || 0,
+    weight: Number(record.weight) || 0,
+    dept: record.dept,
+    details: {
+      seal: record.seal,
+      shipperAddr: record.shipperAddr,
+      consigneeAddr: record.consigneeAddr,
+      factoryName: record.factoryName,
+      factoryAddr: record.factoryAddr,
+      factoryContact: record.factoryContact,
+      tempContainer: record.tempContainer,
+      destCity: record.destCity,
+      destAddr: record.destAddr,
+    },
+    nodes: record.nodes || {},
+  }
+  if (action === 'add') {
+    const { data, error } = await sb.from('shipments').insert(payload).select().single()
+    if (error) throw error
+    return data.id
+  } else if (action === 'update') {
+    const { error } = await sb.from('shipments').update(payload).eq('id', record.id)
+    if (error) throw error
+  } else if (action === 'delete') {
+    const { error } = await sb.from('shipments').delete().eq('id', record.id)
+    if (error) throw error
+  }
+}
+```
+
+把原 HTML 里 `apiCall` 整段、`saveDataToApi` 里的自定义 REST 路径、`loadData` 中的 localStorage 兜底全部替换成上面的 Supabase 调用。
+
+### 示例数据迁移(种子)
+
+`sampleData` 那 5 条示例数据从 `index.html` 移到独立 SQL `supabase-seed-shipments.sql`,你跑一次 INSERT 即可作为初始演示数据。代码里 `sampleData` 常量删掉。
+
+```sql
+-- supabase-seed-shipments.sql:首次部署时一次性运行
+insert into public.shipments (booking, container, shipper, consignee, origin_port, dest_port, goods, ctns, volume, weight, dept, details, nodes)
+values
+  ('SZ-YT-20250508-001', 'MSCU8765432', '深圳市星链智运科技有限公司', 'ABC IMPORT CORP', '深圳盐田', '洛杉矶', '电子配件 / Electronic Components', 240, 14.5, 4200, '操作部',
+   '{"seal":"SL20250501","shipperAddr":"深圳市南山区科技园","consigneeAddr":"123 Commerce St, Los Angeles, CA 90001","factoryName":"深圳市金鑫电子厂","factoryAddr":"深圳市龙华区大浪街道金鑫工业园A栋","factoryContact":"李经理 138-0755-0001","tempContainer":"TMP-YT-2025-0501","destCity":"Los Angeles, CA","destAddr":"456 Logistics Blvd, LA, CA"}'::jsonb,
+   '{"booking":{"status":"done","date":"2025-05-08","note":"已确认舱位"},"truck_pickup":{"status":"done","date":"2025-05-10","note":""},"stuffing":{"status":"done","date":"2025-05-10","note":"装柜完成"},"cy_entry":{"status":"done","date":"2025-05-11","note":""},"exp_customs":{"status":"done","date":"2025-05-11","note":""},"exp_clearance":{"status":"done","date":"2025-05-11","note":"放行"},"sailing":{"status":"done","date":"2025-05-12","note":""},"eta":{"status":"progress","date":"","note":"ETA: 2025-05-28"},"ocean_track":{"status":"progress","date":"","note":"航行中"},"arrival":{"status":"pending","date":"","note":""},"arrival_date":{"status":"pending","date":"","note":""},"imp_customs":{"status":"pending","date":"","note":""},"imp_clearance":{"status":"pending","date":"","note":""},"dray":{"status":"pending","date":"","note":""},"delivery":{"status":"pending","date":"","note":""},"pod":{"status":"pending","date":"","note":""}}'::jsonb);
+-- (其余 4 条同构,实施时补齐)
+```
+
+### localStorage 旧数据迁移
+
+DDP 第一次以 staff 身份登录后,前端 IIFE 检测:
+
+```js
+const oldData = localStorage.getItem('ddp_tracking_data')
+if (oldData && _authUser.app_metadata?.role === 'staff') {
+  if (confirm('检测到本地 DDP 数据,是否上传到云端?')) {
+    const arr = JSON.parse(oldData)
+    for (const r of arr) {
+      delete r.id  // 让 DB 重新生成 uuid
+      await saveShipment(r, 'add')
+    }
+    localStorage.removeItem('ddp_tracking_data')
+    location.reload()
+  }
+}
+```
+
+只迁一次,迁完清掉本地。
+
+### 性能与体验
+
+- 首次加载从 Supabase 拉一次,以后增删改在前端立即更新本地数组 + 调 Supabase 持久化。30 秒轮询一次拉远端最新(类似 shipping 的 useRecords)
+- viewer 看到的就是同一份数据
+- 所有行底部多一行 `创建:@xxx · 修改:@yyy`,跟 shipping 一致
