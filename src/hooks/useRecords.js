@@ -12,7 +12,7 @@ export function useRecords() {
     const tick = () => {
       supabase
         .from('records')
-        .select('*')
+        .select('*, creator:created_by(email), updater:updated_by(email)')
         .order('created_at', { ascending: false })
         .then(({ data, error }) => {
           if (cancelled) return
@@ -33,7 +33,7 @@ export function useRecords() {
     const { data, error } = await supabase
       .from('records')
       .insert(newRecord)
-      .select()
+      .select('*, creator:created_by(email), updater:updated_by(email)')
       .single()
     if (error) throw error
     setRecords(prev => [data, ...prev])
@@ -45,7 +45,7 @@ export function useRecords() {
       .from('records')
       .update(patch)
       .eq('id', id)
-      .select()
+      .select('*, creator:created_by(email), updater:updated_by(email)')
       .single()
     if (error) throw error
     setRecords(prev => prev.map(r => r.id === id ? data : r))

@@ -3,6 +3,9 @@ import { useRecords } from './hooks/useRecords'
 import { useClientId } from './hooks/useClientId'
 import { useAdmin } from './hooks/useAdmin'
 import { useWeek } from './hooks/useWeek'
+import { useAuthUser } from './hooks/useAuthUser'
+import { supabase } from './lib/supabase'
+import { InvitePanel } from './components/InvitePanel'
 
 // ─────────────────────────────────
 // 柜子配置
@@ -219,6 +222,12 @@ function RecordList({ records, clientId, isAdmin, onDelete, onUpdate }) {
                   <span>CBM: {Number(r.cbm).toFixed(2)}</span>
                   <span>KG: {Number(r.kg).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                   <span>收入: ¥{Number(r.revenue).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="text-xs text-gray-400 mt-1.5">
+                  创建:{r.creator?.email ? '@' + r.creator.email.split('@')[0] : '未知'}
+                  {r.updater && r.updater.email && r.updater.email !== r.creator?.email && (
+                    <> · 修改:@{r.updater.email.split('@')[0]}</>
+                  )}
                 </div>
               </div>
             )}
@@ -526,6 +535,24 @@ function AdminButton({ isAdmin, onLogin, onLogout }) {
 }
 
 // ─────────────────────────────────
+// 组件:用户徽章
+// ─────────────────────────────────
+function UserBadge() {
+  const { user } = useAuthUser()
+  if (!user) return null
+  const prefix = user.email.split('@')[0]
+  return (
+    <div className="flex items-center gap-2 mr-2">
+      <span className="text-xs text-gray-500" title={user.email}>@{prefix}</span>
+      <button onClick={() => supabase.auth.signOut()}
+        className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg">
+        退出
+      </button>
+    </div>
+  )
+}
+
+// ─────────────────────────────────
 // 主 App
 // ─────────────────────────────────
 export default function App() {
@@ -585,6 +612,7 @@ export default function App() {
             <p className="text-xs text-gray-400">实时追踪柜子装载、重量与收入情况</p>
           </div>
           <div className="flex items-center">
+            <UserBadge />
             {isAdmin && <NextWeekButton currentWeek={currentWeek} password={password} onAdvance={advance} />}
             <AdminButton isAdmin={isAdmin} onLogin={login} onLogout={logout} />
           </div>
@@ -606,6 +634,7 @@ export default function App() {
         </div>
 
         {isAdmin && <CostConfigPanel costs={costs} onUpdate={updateCost} />}
+        {isAdmin && <InvitePanel />}
 
         <div className="mb-6">
           <Summary
