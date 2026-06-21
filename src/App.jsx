@@ -6,6 +6,7 @@ import { useWeek } from './hooks/useWeek'
 import { useAuthUser } from './hooks/useAuthUser'
 import { supabase } from './lib/supabase'
 import { InvitePanel } from './components/InvitePanel'
+import { PermissionCenter } from './components/PermissionCenter'
 
 // ─────────────────────────────────
 // 柜子配置
@@ -82,7 +83,7 @@ function ContainerCard({ config, data, cost }) {
 // ─────────────────────────────────
 // 组件：输入表单
 // ────────────────────────────────
-function InputForm({ onSubmit, disabled, isAdmin, currentWeek, selectedWeek }) {
+function InputForm({ onSubmit, disabled, disabledReason, isAdmin, currentWeek, selectedWeek }) {
   const [sales, setSales] = useState('')
   const [name, setName]   = useState('')
   const [cbm, setCbm]     = useState('')
@@ -112,7 +113,7 @@ function InputForm({ onSubmit, disabled, isAdmin, currentWeek, selectedWeek }) {
       <h3 className="text-base font-semibold text-gray-800 mb-4">录入数据</h3>
       {disabled && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2 mb-4 text-xs text-yellow-700">
-          查看历史 (Wk{selectedWeek}),录入功能仅在 Wk{currentWeek} (本周) 可用
+          {disabledReason || `查看历史 (Wk${selectedWeek}),录入功能仅在 Wk${currentWeek} (本周) 可用`}
         </div>
       )}
       {!disabled && isAdmin && selectedWeek !== currentWeek && (
@@ -160,7 +161,7 @@ function InputForm({ onSubmit, disabled, isAdmin, currentWeek, selectedWeek }) {
 // ─────────────────────────────────
 // 组件：记录列表（可删除 / 可编辑）
 // ─────────────────────────────────
-function RecordList({ records, clientId, isAdmin, onDelete, onUpdate }) {
+function RecordList({ records, clientId, isAdmin, canWriteRecords, onDelete, onUpdate }) {
   const [editingId, setEditingId] = useState(null)
   const [edit, setEdit]           = useState({})
 
@@ -211,7 +212,7 @@ function RecordList({ records, clientId, isAdmin, onDelete, onUpdate }) {
                     <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{r.container}</span>
                     <span className="text-xs text-gray-400">{fmtTime(r.created_at)}</span>
                   </div>
-                  {(isAdmin || r.client_id === clientId) && (
+                  {canWriteRecords && (isAdmin || r.client_id === clientId) && (
                     <div className="flex gap-3">
                       <button onClick={() => start(r)} className="text-xs text-blue-600 hover:text-blue-800">编辑</button>
                       <button onClick={() => onDelete(r.id)}  className="text-xs text-red-500 hover:text-red-700">删除</button>
@@ -557,9 +558,13 @@ function UserBadge() {
 // ─────────────────────────────────
 export default function App() {
   const clientId = useClientId()
+  const { role } = useAuthUser()
   const { records, add, update, remove } = useRecords()
   const { isAdmin, costs, password, login, logout, updateCost } = useAdmin()
   const { currentWeek, selectedWeek, setSelectedWeek, advance } = useWeek()
+  const canWriteRecords = ['owner', 'staff', 'operator'].includes(role)
+  const canSeeSensitive = ['owner', 'staff'].includes(role)
+  const canUseAdminMode = isAdmin && canSeeSensitive
 
   const state = useMemo(() => {
     const s = {}
@@ -580,9 +585,10 @@ export default function App() {
   }, [records])
 
   const handleSubmit = useCallback(async (salesperson, container, cbm, kg, revenue) => {
-    const targetWeek = isAdmin ? selectedWeek : currentWeek
+    if (!canWriteRecords) throw new Error('当前角色没有写入权限')
+    const targetWeek = canUseAdminMode ? selectedWeek : currentWeek
     await add({ salesperson, container, cbm, kg, revenue, client_id: clientId, week_number: targetWeek })
-  }, [add, clientId, currentWeek, selectedWeek, isAdmin])
+  }, [add, canUseAdminMode, canWriteRecords, clientId, currentWeek, selectedWeek])
 
   const handleDelete = useCallback(async (id) => {
     try { await remove(id) }
@@ -613,33 +619,42 @@ export default function App() {
           </div>
           <div className="flex items-center">
             <UserBadge />
-            {isAdmin && <NextWeekButton currentWeek={currentWeek} password={password} onAdvance={advance} />}
-            <AdminButton isAdmin={isAdmin} onLogin={login} onLogout={logout} />
+            {canUseAdminMode && <NextWeekButton currentWeek={currentWeek} password={password} onAdvance={advance} />}
+            {canSeeSensitive && <AdminButton isAdmin={isAdmin} onLogin={login} onLogout={logout} />}
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          <div><InputForm onSubmit={handleSubmit} disabled={!isAdmin && selectedWeek !== currentWeek} isAdmin={isAdmin} currentWeek={currentWeek} selectedWeek={selectedWeek} /></div>
+          <div><InputForm
+            onSubmit={handleSubmit}
+            disabled={!canWriteRecords || (!canUseAdminMode && selectedWeek !== currentWeek)}
+            disabledReason={!canWriteRecords ? '当前角色为只读权限，不能录入或修改数据' : ''}
+            isAdmin={canUseAdminMode}
+            currentWeek={currentWeek}
+            selectedWeek={selectedWeek}
+          /></div>
           <div className="lg:col-span-2">
             <RecordList
               records={records}
               clientId={clientId}
-              isAdmin={isAdmin}
+              isAdmin={canUseAdminMode}
+              canWriteRecords={canWriteRecords}
               onDelete={handleDelete}
               onUpdate={handleUpdate}
             />
           </div>
         </div>
 
-        {isAdmin && <CostConfigPanel costs={costs} onUpdate={updateCost} />}
-        {isAdmin && <InvitePanel />}
+        {canUseAdminMode && <CostConfigPanel costs={costs} onUpdate={updateCost} />}
+        <PermissionCenter role={role} />
+        {role === 'owner' && <InvitePanel />}
 
         <div className="mb-6">
           <Summary
             state={state}
-            costs={isAdmin ? costs : null}
+            costs={canUseAdminMode ? costs : null}
             selectedWeek={selectedWeek}
             currentWeek={currentWeek}
             weeksWithData={weeksWithData}
@@ -653,15 +668,15 @@ export default function App() {
               key={config.name}
               config={config}
               data={state[config.name]}
-              cost={isAdmin ? costs[config.name] : null}
+              cost={canUseAdminMode ? costs[config.name] : null}
             />
           ))}
         </div>
 
         <WeekSummaryTable
           records={records}
-          costs={isAdmin ? costs : null}
-          isAdmin={isAdmin}
+          costs={canUseAdminMode ? costs : null}
+          isAdmin={canUseAdminMode}
           onSelectWeek={setSelectedWeek}
         />
       </main>

@@ -15,9 +15,11 @@ export function AuthGate({ children }) {
     return <div className="min-h-screen flex items-center justify-center text-gray-500">加载中...</div>
   }
 
-  if (user && role === 'staff') return children
+  const canEnterDashboard = ['owner', 'staff', 'operator', 'viewer'].includes(role)
 
-  if (user && role !== 'staff') {
+  if (user && canEnterDashboard) return children
+
+  if (user && !canEnterDashboard) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-4">
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 w-full max-w-md text-center">
