@@ -61,8 +61,14 @@ async function readExcelPreview(file) {
     ? parseCsv(await file.text())
     : await readXlsxFile(file)
 
+  const normalizeRow = (row) => {
+    if (Array.isArray(row)) return row
+    if (row && typeof row === 'object') return Object.values(row)
+    return [row]
+  }
+
   const cleaned = rows
-    .map(row => row.map(cell => String(cell ?? '').trim()))
+    .map(row => normalizeRow(row).map(cell => String(cell ?? '').trim()))
     .filter(row => row.some(Boolean))
     .slice(0, 60)
 
