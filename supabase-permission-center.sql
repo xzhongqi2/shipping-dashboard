@@ -108,7 +108,7 @@ begin
     raise exception 'invalid invite role: %', target_role;
   end if;
 
-  new_code := replace(replace(replace(encode(gen_random_bytes(6), 'base64'), '+', ''), '/', ''), '=', '');
+  new_code := upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12));
   exp := now() + interval '30 days';
 
   insert into public.invites (code, email, role, created_by, expires_at)
