@@ -186,17 +186,18 @@ function UploadPanel({ title, type, canUpload, onUpload }) {
     e.preventDefault()
     const form = e.currentTarget
     setMsg('')
-    if (!file) { setMsg('请选择 Excel 或图片文件'); return }
+    const selectedFile = file || form.elements.contentFile?.files?.[0]
+    if (!selectedFile) { setMsg('请选择 Excel 或图片文件'); return }
 
-    const fileType = getFileType(file)
+    const fileType = getFileType(selectedFile)
     if (!fileType) { setMsg('仅支持 .xlsx/.csv 和图片文件，旧 .xls 请先另存为 .xlsx'); return }
 
     setBusy(true)
     try {
-      const preview = fileType === 'excel' ? await readExcelPreview(file) : null
+      const preview = fileType === 'excel' ? await readExcelPreview(selectedFile) : null
       await onUpload({
         title: uploadTitle.trim() || `${title} ${new Date().toLocaleDateString('zh-CN')}`,
-        file,
+        file: selectedFile,
         fileType,
         preview,
       })
@@ -222,7 +223,7 @@ function UploadPanel({ title, type, canUpload, onUpload }) {
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">文件</label>
-          <input type="file" accept=".xlsx,.csv,image/*" onChange={e => setFile(e.target.files?.[0] || null)}
+          <input name="contentFile" type="file" accept=".xlsx,.csv,image/*" onChange={e => setFile(e.target.files?.[0] || null)}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" />
         </div>
         <button type="submit" disabled={busy}
