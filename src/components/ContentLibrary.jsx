@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react'
-import readXlsxFile from 'read-excel-file/browser'
 import { useContentItems } from '../hooks/useContentItems'
 
 const EXCEL_TYPES = new Set([
@@ -20,6 +19,26 @@ function getFileType(file) {
   if (file.type.startsWith('image/')) return 'image'
   if (EXCEL_TYPES.has(file.type) || /\.(xlsx|csv)$/i.test(file.name)) return 'excel'
   return ''
+}
+
+function excelColorToHex(color, fallback = '#ffffff') {
+  const argb = color?.argb || color?.fgColor?.argb
+  if (!argb) return fallback
+  const hex = argb.length === 8 ? argb.slice(2) : argb
+  return `#${hex}`.toLowerCase()
+}
+
+function cellValueToText(value) {
+  if (value == null) return ''
+  if (value instanceof Date) return value.toLocaleDateString('zh-CN')
+  if (typeof value === 'object') {
+    if (Array.isArray(value.richText)) return value.richText.map(part => part.text || '').join('')
+    if (value.text) return String(value.text)
+    if (value.result != null) return cellValueToText(value.result)
+    if (value.formula) return String(value.result ?? '')
+    if (value.hyperlink && value.text) return String(value.text)
+  }
+  return String(value)
 }
 
 function parseCsv(text) {
@@ -57,16 +76,72 @@ function parseCsv(text) {
 }
 
 async function readExcelPreview(file) {
-  const rows = /\.csv$/i.test(file.name)
-    ? parseCsv(await file.text())
-    : await readXlsxFile(file)
-
   const normalizeRow = (row) => {
     if (Array.isArray(row)) return row
     if (row && typeof row === 'object') return Object.values(row)
     return [row]
   }
 
+  if (!/\.csv$/i.test(file.name)) {
+    const ExcelJS = await import('exceljs')
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(await file.arrayBuffer())
+    const sheet = workbook.worksheets[0]
+    const rowCount = sheet.rowCount
+    const colCount = sheet.columnCount
+    const columns = Array.from({ length: colCount }, (_, index) => {
+      const column = sheet.getColumn(index + 1)
+      return Math.max(58, Math.min((column.width || 12) * 8, 260))
+    })
+    const rows = []
+
+    for (let rowIndex = 1; rowIndex <= rowCount; rowIndex += 1) {
+      const row = sheet.getRow(rowIndex)
+      const cells = []
+      for (let colIndex = 1; colIndex <= colCount; colIndex += 1) {
+        const cell = row.getCell(colIndex)
+        const fill = cell.fill?.fgColor ? excelColorToHex(cell.fill.fgColor, '#ffffff') : '#ffffff'
+        const font = cell.font || {}
+        const alignment = cell.alignment || {}
+        cells.push({
+          text: cellValueToText(cell.value).trim(),
+          fill,
+          color: excelColorToHex(font.color, '#111827'),
+          bold: Boolean(font.bold),
+          italic: Boolean(font.italic),
+          size: font.size || 13,
+          align: alignment.horizontal || 'center',
+          valign: alignment.vertical || 'middle',
+          wrap: Boolean(alignment.wrapText),
+          border: Boolean(cell.border && Object.keys(cell.border).length),
+        })
+      }
+      rows.push({
+        height: Math.max(28, Math.min((row.height || 24) * 1.25, 90)),
+        cells,
+      })
+    }
+
+    const merges = Object.values(sheet._merges || {}).map(merge => {
+      const model = merge.model || merge
+      return {
+        top: model.top,
+        left: model.left,
+        bottom: model.bottom,
+        right: model.right,
+      }
+    }).filter(merge => merge.top && merge.left && merge.bottom && merge.right)
+
+    return {
+      mode: 'styled',
+      sheetName: sheet.name || 'Sheet1',
+      columns,
+      rows,
+      merges,
+    }
+  }
+
+  const rows = parseCsv(await file.text())
   const cleaned = rows
     .map(row => normalizeRow(row).map(cell => String(cell ?? '').trim()))
     .filter(row => row.some(Boolean))
@@ -123,6 +198,8 @@ function wrapCellText(value, maxChars) {
 }
 
 function buildSheetImage(preview) {
+  if (preview?.mode === 'styled') return buildStyledSheetImage(preview)
+
   const headers = preview?.headers || []
   const rows = preview?.rows || []
   const tableRows = [headers, ...rows].filter(row => row?.some(Boolean))
@@ -169,6 +246,78 @@ function buildSheetImage(preview) {
       <rect width="100%" height="100%" rx="14" fill="#ffffff"/>
       <rect x="1" y="1" width="${width - 2}" height="${height - 2}" rx="14" fill="none" stroke="#dbe3ee"/>
       <text x="18" y="29" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="15" font-weight="700" fill="#0f172a">${escapeXml(preview?.sheetName || 'Excel 预览')}</text>
+      ${body}
+    </svg>
+  `.trim()
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
+function buildStyledSheetImage(preview) {
+  const columns = preview.columns || []
+  const rows = preview.rows || []
+  const merges = preview.merges || []
+  const titleHeight = 34
+  const rowHeights = rows.map(row => row.height || 32)
+  const width = Math.max(240, columns.reduce((sum, col) => sum + col, 0) + 2)
+  const height = titleHeight + rowHeights.reduce((sum, row) => sum + row, 0) + 2
+
+  const xPositions = columns.reduce((acc, col, index) => {
+    acc[index + 1] = (acc[index] || 1) + (index === 0 ? 0 : columns[index - 1])
+    return acc
+  }, { 0: 1 })
+  const yPositions = rowHeights.reduce((acc, rowHeight, index) => {
+    acc[index + 1] = titleHeight + rowHeights.slice(0, index).reduce((sum, row) => sum + row, 0)
+    return acc
+  }, {})
+
+  const mergeByStart = new Map()
+  const coveredCells = new Set()
+  merges.forEach(merge => {
+    mergeByStart.set(`${merge.top}:${merge.left}`, merge)
+    for (let row = merge.top; row <= merge.bottom; row += 1) {
+      for (let col = merge.left; col <= merge.right; col += 1) {
+        if (row !== merge.top || col !== merge.left) coveredCells.add(`${row}:${col}`)
+      }
+    }
+  })
+
+  const body = rows.map((row, rowIndex) => {
+    const rowNumber = rowIndex + 1
+    return columns.map((colWidth, colIndex) => {
+      const colNumber = colIndex + 1
+      const key = `${rowNumber}:${colNumber}`
+      if (coveredCells.has(key)) return ''
+
+      const merge = mergeByStart.get(key)
+      const widthSpan = merge
+        ? columns.slice(colNumber - 1, merge.right).reduce((sum, col) => sum + col, 0)
+        : colWidth
+      const heightSpan = merge
+        ? rowHeights.slice(rowNumber - 1, merge.bottom).reduce((sum, rowHeight) => sum + rowHeight, 0)
+        : rowHeights[rowIndex]
+      const cell = row.cells?.[colIndex] || {}
+      const x = xPositions[colNumber]
+      const y = yPositions[rowNumber]
+      const fontSize = Math.max(10, Math.min(cell.size || 13, 22))
+      const lines = wrapCellText(cell.text || '', Math.floor((widthSpan - 14) / 8))
+      const anchor = cell.align === 'left' ? 'start' : cell.align === 'right' ? 'end' : 'middle'
+      const textX = cell.align === 'left' ? x + 8 : cell.align === 'right' ? x + widthSpan - 8 : x + widthSpan / 2
+      const textY = y + Math.max(fontSize + 6, (heightSpan - (lines.length - 1) * (fontSize + 3)) / 2 + fontSize / 2)
+
+      return `
+        <rect x="${x}" y="${y}" width="${widthSpan}" height="${heightSpan}" fill="${cell.fill || '#ffffff'}" stroke="#111827" stroke-width="${cell.border ? 1.2 : 0.6}" />
+        <text x="${textX}" y="${textY}" text-anchor="${anchor}" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="${fontSize}" font-weight="${cell.bold ? 700 : 500}" font-style="${cell.italic ? 'italic' : 'normal'}" fill="${cell.color || '#111827'}">
+          ${lines.map((line, lineIndex) => `<tspan x="${textX}" dy="${lineIndex === 0 ? 0 : fontSize + 3}">${escapeXml(line)}</tspan>`).join('')}
+        </text>
+      `
+    }).join('')
+  }).join('')
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <rect width="100%" height="100%" fill="#ffffff"/>
+      <text x="14" y="23" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" font-weight="700" fill="#64748b">${escapeXml(preview.sheetName || 'Excel')}</text>
       ${body}
     </svg>
   `.trim()
