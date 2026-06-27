@@ -87,35 +87,78 @@ function EmptyState({ title }) {
   )
 }
 
+function escapeXml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function getTextWidth(value) {
+  const text = String(value ?? '')
+  let width = 0
+  for (const char of text) {
+    width += /[\u4e00-\u9fff]/.test(char) ? 14 : 8
+  }
+  return width
+}
+
+function buildSheetImage(preview) {
+  const headers = preview?.headers || []
+  const rows = preview?.rows || []
+  const tableRows = [headers, ...rows].filter(row => row?.some(Boolean)).slice(0, 36)
+  const columnCount = Math.max(...tableRows.map(row => row.length), 1)
+  const columnWidths = Array.from({ length: columnCount }, (_, index) => {
+    const widest = tableRows.reduce((max, row) => Math.max(max, getTextWidth(row[index])), 0)
+    return Math.max(110, Math.min(widest + 32, 260))
+  })
+  const rowHeight = 38
+  const titleHeight = 46
+  const width = columnWidths.reduce((sum, col) => sum + col, 0) + 2
+  const height = titleHeight + tableRows.length * rowHeight + 2
+
+  let y = titleHeight
+  const body = tableRows.map((row, rowIndex) => {
+    let x = 1
+    const cells = columnWidths.map((colWidth, colIndex) => {
+      const text = escapeXml(row[colIndex] || '')
+      const bg = rowIndex === 0 ? '#eef4ff' : rowIndex % 2 ? '#ffffff' : '#f8fafc'
+      const weight = rowIndex === 0 ? '700' : '500'
+      const color = rowIndex === 0 ? '#1f3b63' : '#334155'
+      const cell = `
+        <rect x="${x}" y="${y}" width="${colWidth}" height="${rowHeight}" fill="${bg}" stroke="#dbe3ee" />
+        <text x="${x + 12}" y="${y + 24}" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="14" font-weight="${weight}" fill="${color}">${text}</text>
+      `
+      x += colWidth
+      return cell
+    }).join('')
+    y += rowHeight
+    return cells
+  }).join('')
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <rect width="100%" height="100%" rx="14" fill="#ffffff"/>
+      <rect x="1" y="1" width="${width - 2}" height="${height - 2}" rx="14" fill="none" stroke="#dbe3ee"/>
+      <text x="18" y="29" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="15" font-weight="700" fill="#0f172a">${escapeXml(preview?.sheetName || 'Excel 预览')}</text>
+      ${body}
+    </svg>
+  `.trim()
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
 function ExcelPreview({ preview }) {
   const headers = preview?.headers || []
   const rows = preview?.rows || []
   if (!headers.length && !rows.length) return null
+  const imageSrc = buildSheetImage(preview)
 
   return (
-    <div className="overflow-x-auto border border-gray-100 rounded-xl">
-      <table className="min-w-full text-sm table-fixed">
-        <thead className="bg-gray-50">
-          <tr>
-            {headers.map((header, idx) => (
-              <th key={`${header}-${idx}`} className="text-left text-xs font-semibold text-gray-500 px-3 py-2 whitespace-nowrap min-w-32 max-w-56 truncate">
-                {header || `列 ${idx + 1}`}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, rowIndex) => (
-            <tr key={rowIndex} className="border-t border-gray-50">
-              {headers.map((_, colIndex) => (
-                <td key={`${rowIndex}-${colIndex}`} className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap min-w-32 max-w-56 truncate" title={row[colIndex] || ''}>
-                  {row[colIndex] || ''}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="overflow-x-auto rounded-xl border border-gray-100 bg-gray-50 p-3">
+      <img src={imageSrc} alt="Excel 图片预览" className="max-w-none rounded-xl shadow-sm" />
     </div>
   )
 }
