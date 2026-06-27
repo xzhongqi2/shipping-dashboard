@@ -21,6 +21,8 @@ const CONTAINERS = [
   { name: '锁仓柜', capacityCBM: 70, capacityKG: 19500 },
 ]
 
+const DEFAULT_CONTAINER_NO = 1
+
 
 // ─────────────────────────────────
 // 工具函数
@@ -28,6 +30,15 @@ const CONTAINERS = [
 function fmtTime(ts) {
   const d = new Date(ts)
   return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function getContainerNo(record) {
+  const num = Number(record?.container_no)
+  return Number.isInteger(num) && num > 0 ? num : DEFAULT_CONTAINER_NO
+}
+
+function isSlotUsed(data) {
+  return data.cbm > 0 || data.kg > 0 || data.revenue > 0
 }
 
 // ─────────────────────────────────
@@ -57,7 +68,10 @@ function ContainerCard({ config, data, cost }) {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-gray-800">{config.name}</h3>
+        <div>
+          <h3 className="text-lg font-semibold text-gray-800">{config.name}</h3>
+          <p className="text-xs text-gray-400 mt-0.5">第 {data.containerNo} 柜</p>
+        </div>
         {cost && (
           <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded">
             成本 ¥{cost.toLocaleString()}
@@ -84,9 +98,10 @@ function ContainerCard({ config, data, cost }) {
 // ─────────────────────────────────
 // 组件：输入表单
 // ────────────────────────────────
-function InputForm({ onSubmit, disabled, disabledReason, isAdmin, currentWeek, selectedWeek }) {
+function InputForm({ onSubmit, disabled, disabledReason, isAdmin, currentWeek, selectedWeek, containerNoOptions }) {
   const [sales, setSales] = useState('')
   const [name, setName]   = useState('')
+  const [containerNo, setContainerNo] = useState(DEFAULT_CONTAINER_NO)
   const [cbm, setCbm]     = useState('')
   const [kg, setKg]       = useState('')
   const [rev, setRev]     = useState('')
@@ -97,12 +112,13 @@ function InputForm({ onSubmit, disabled, disabledReason, isAdmin, currentWeek, s
     if (!sales.trim())     { setMsg('⚠️ 请输入销售人员'); return }
     if (!name)             { setMsg('⚠️ 请选择柜子类型'); return }
     const c = parseFloat(cbm), k = parseFloat(kg), r = parseFloat(rev)
+    const no = parseInt(containerNo, 10) || DEFAULT_CONTAINER_NO
     if (isNaN(c) || c < 0) { setMsg('⚠️ 请输入有效的CBM'); return }
     if (isNaN(k) || k < 0) { setMsg('⚠️ 请输入有效的KG');  return }
     if (isNaN(r) || r < 0) { setMsg('⚠️ 请输入有效的收入'); return }
     try {
-      await onSubmit(sales.trim(), name, c, k, r)
-      setSales(''); setName(''); setCbm(''); setKg(''); setRev(''); setMsg('✅ 已添加')
+      await onSubmit(sales.trim(), name, no, c, k, r)
+      setSales(''); setName(''); setContainerNo(DEFAULT_CONTAINER_NO); setCbm(''); setKg(''); setRev(''); setMsg('✅ 已添加')
       setTimeout(() => setMsg(''), 2000)
     } catch (err) {
       setMsg('⚠️ 提交失败:' + err.message)
@@ -130,10 +146,20 @@ function InputForm({ onSubmit, disabled, disabledReason, isAdmin, currentWeek, s
         </div>
         <div className="col-span-2 sm:col-span-1">
           <label className="block text-xs text-gray-500 mb-1">柜子类型</label>
-          <select value={name} onChange={e => setName(e.target.value)}
+          <select value={name} onChange={e => { setName(e.target.value); setContainerNo(DEFAULT_CONTAINER_NO) }}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
             <option value="">请选择</option>
             {CONTAINERS.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+          </select>
+        </div>
+        <div className="col-span-2 sm:col-span-1">
+          <label className="block text-xs text-gray-500 mb-1">柜号</label>
+          <select value={containerNo} onChange={e => setContainerNo(Number(e.target.value))}
+            disabled={!name}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:bg-gray-50">
+            {(containerNoOptions[name] || [DEFAULT_CONTAINER_NO]).map(no => (
+              <option key={no} value={no}>第 {no} 柜</option>
+            ))}
           </select>
         </div>
         <div><label className="block text-xs text-gray-500 mb-1">CBM</label>
@@ -187,12 +213,13 @@ function RecordList({ records, clientId, isAdmin, canWriteRecords, onDelete, onU
             {editingId === r.id ? (
               /* ── 编辑模式 ── */
               <div className="space-y-2">
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-4 gap-2">
                   <input type="text"     value={edit.salesperson} onChange={e => setEdit({ ...edit, salesperson: e.target.value })} className="border rounded px-2 py-1 text-sm" />
                   <select               value={edit.container}  onChange={e => setEdit({ ...edit, container: e.target.value })}
                     className="border rounded px-2 py-1 text-sm bg-white">
                     {CONTAINERS.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
                   </select>
+                  <input type="number" min="1" max="20" step="1" value={getContainerNo(edit)} onChange={e => setEdit({ ...edit, container_no: e.target.value })} className="border rounded px-2 py-1 text-sm" />
                   <input type="number" step="0.01" value={edit.revenue}   onChange={e => setEdit({ ...edit, revenue: e.target.value })} className="border rounded px-2 py-1 text-sm" />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
@@ -210,7 +237,7 @@ function RecordList({ records, clientId, isAdmin, canWriteRecords, onDelete, onU
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium text-sm text-gray-800">{r.salesperson}</span>
-                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{r.container}</span>
+                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{r.container} · 第{getContainerNo(r)}柜</span>
                     <span className="text-xs text-gray-400">{fmtTime(r.created_at)}</span>
                   </div>
                   {canWriteRecords && (isAdmin || r.client_id === clientId) && (
@@ -243,13 +270,14 @@ function RecordList({ records, clientId, isAdmin, canWriteRecords, onDelete, onU
 // ─────────────────────────────────
 // 组件：数据汇总
 // ─────────────────────────────────
-function Summary({ state, costs, selectedWeek, currentWeek, weeksWithData, onWeekChange }) {
-  const totalCBM    = CONTAINERS.reduce((s, c) => s + state[c.name].cbm, 0)
-  const totalKG     = CONTAINERS.reduce((s, c) => s + state[c.name].kg, 0)
-  const totalRev    = CONTAINERS.reduce((s, c) => s + state[c.name].revenue, 0)
-  const capCBM      = CONTAINERS.reduce((s, c) => s + c.capacityCBM, 0)
-  const capKG       = CONTAINERS.reduce((s, c) => s + c.capacityKG, 0)
-  const totalCost   = costs ? CONTAINERS.reduce((s, c) => s + (costs[c.name] || 0), 0) : 0
+function Summary({ slots, costs, selectedWeek, currentWeek, weeksWithData, onWeekChange }) {
+  const countedSlots = slots.filter(slot => slot.containerNo === 1 || isSlotUsed(slot.data))
+  const totalCBM    = countedSlots.reduce((s, slot) => s + slot.data.cbm, 0)
+  const totalKG     = countedSlots.reduce((s, slot) => s + slot.data.kg, 0)
+  const totalRev    = countedSlots.reduce((s, slot) => s + slot.data.revenue, 0)
+  const capCBM      = countedSlots.reduce((s, slot) => s + slot.config.capacityCBM, 0)
+  const capKG       = countedSlots.reduce((s, slot) => s + slot.config.capacityKG, 0)
+  const totalCost   = costs ? countedSlots.reduce((s, slot) => s + (costs[slot.config.name] || 0), 0) : 0
 
   const items = [
     { label: '总装载率', value: totalCBM / capCBM, detail: `${totalCBM.toFixed(2)} / ${capCBM} CBM` },
@@ -360,17 +388,14 @@ function WeekSummaryTable({ records, costs, isAdmin, onSelectWeek }) {
     const groups = {}
     records.forEach(r => {
       if (!r.week_number) return
-      if (!groups[r.week_number]) groups[r.week_number] = { cbm: 0, kg: 0, revenue: 0 }
+      if (!groups[r.week_number]) groups[r.week_number] = { cbm: 0, kg: 0, revenue: 0, slots: new Set() }
       groups[r.week_number].cbm     += Number(r.cbm)
       groups[r.week_number].kg      += Number(r.kg)
       groups[r.week_number].revenue += Number(r.revenue)
+      groups[r.week_number].slots.add(`${r.container}:${getContainerNo(r)}`)
     })
     return groups
   }, [records])
-
-  const capCBM  = CONTAINERS.reduce((s, c) => s + c.capacityCBM, 0)
-  const capKG   = CONTAINERS.reduce((s, c) => s + c.capacityKG, 0)
-  const totalCost = isAdmin && costs ? CONTAINERS.reduce((s, c) => s + (costs[c.name] || 0), 0) : 0
 
   const weeks = Object.keys(weekGroups).map(Number).sort((a, b) => a - b)
 
@@ -392,6 +417,14 @@ function WeekSummaryTable({ records, costs, isAdmin, onSelectWeek }) {
           <tbody>
             {weeks.map(w => {
               const g = weekGroups[w]
+              const baseSlots = new Set(CONTAINERS.map(c => `${c.name}:1`))
+              g.slots.forEach(slot => baseSlots.add(slot))
+              const slotCount = baseSlots.size
+              const capCBM = slotCount * 70
+              const capKG = slotCount * 19500
+              const totalCost = isAdmin && costs
+                ? Array.from(baseSlots).reduce((sum, slot) => sum + (costs[slot.split(':')[0]] || 0), 0)
+                : 0
               const loadRate = g.cbm / capCBM
               const weightRate = g.kg / capKG
               const revenueRate = totalCost > 0 ? g.revenue / totalCost : null
@@ -614,15 +647,55 @@ export default function App() {
 
   const state = useMemo(() => {
     const s = {}
-    CONTAINERS.forEach(c => { s[c.name] = { cbm: 0, kg: 0, revenue: 0 } })
+    CONTAINERS.forEach(c => { s[c.name] = {} })
     records.filter(r => r.week_number === selectedWeek).forEach(r => {
       if (!s[r.container]) return
-      s[r.container].cbm     += Number(r.cbm)
-      s[r.container].kg      += Number(r.kg)
-      s[r.container].revenue += Number(r.revenue)
+      const no = getContainerNo(r)
+      if (!s[r.container][no]) s[r.container][no] = { cbm: 0, kg: 0, revenue: 0, containerNo: no }
+      s[r.container][no].cbm     += Number(r.cbm)
+      s[r.container][no].kg      += Number(r.kg)
+      s[r.container][no].revenue += Number(r.revenue)
     })
     return s
   }, [records, selectedWeek])
+
+  const dashboardSlots = useMemo(() => {
+    return CONTAINERS.flatMap(config => {
+      const slotsByNo = state[config.name] || {}
+      const existingNos = Object.keys(slotsByNo).map(Number)
+      const maxExisting = Math.max(DEFAULT_CONTAINER_NO, ...existingNos)
+      const slots = []
+      for (let no = 1; no <= maxExisting; no += 1) {
+        slots.push({
+          config,
+          containerNo: no,
+          data: slotsByNo[no] || { cbm: 0, kg: 0, revenue: 0, containerNo: no },
+        })
+      }
+      const last = slots[slots.length - 1]
+      const needsNext = last.data.cbm >= config.capacityCBM || last.data.kg >= config.capacityKG
+      if (needsNext) {
+        const no = maxExisting + 1
+        slots.push({
+          config,
+          containerNo: no,
+          data: { cbm: 0, kg: 0, revenue: 0, containerNo: no },
+        })
+      }
+      return slots
+    })
+  }, [state])
+
+  const containerNoOptions = useMemo(() => {
+    const options = {}
+    CONTAINERS.forEach(config => {
+      const slotsByNo = state[config.name] || {}
+      const maxExisting = Math.max(DEFAULT_CONTAINER_NO, ...Object.keys(slotsByNo).map(Number))
+      const maxOption = Math.min(20, maxExisting + 1)
+      options[config.name] = Array.from({ length: maxOption }, (_, i) => i + 1)
+    })
+    return options
+  }, [state])
 
   const weeksWithData = useMemo(() => {
     const s = new Set()
@@ -630,10 +703,10 @@ export default function App() {
     return s
   }, [records])
 
-  const handleSubmit = useCallback(async (salesperson, container, cbm, kg, revenue) => {
+  const handleSubmit = useCallback(async (salesperson, container, containerNo, cbm, kg, revenue) => {
     if (!canWriteRecords) throw new Error('当前角色没有写入权限')
     const targetWeek = canUseAdminMode ? selectedWeek : currentWeek
-    await add({ salesperson, container, cbm, kg, revenue, client_id: clientId, week_number: targetWeek })
+    await add({ salesperson, container, container_no: containerNo, cbm, kg, revenue, client_id: clientId, week_number: targetWeek })
   }, [add, canUseAdminMode, canWriteRecords, clientId, currentWeek, selectedWeek])
 
   const handleDelete = useCallback(async (id) => {
@@ -646,6 +719,7 @@ export default function App() {
       await update(id, {
         salesperson: updated.salesperson,
         container:   updated.container,
+        container_no: parseInt(updated.container_no, 10) || DEFAULT_CONTAINER_NO,
         cbm:         parseFloat(updated.cbm) || 0,
         kg:          parseFloat(updated.kg)  || 0,
         revenue:     parseFloat(updated.revenue) || 0,
@@ -686,6 +760,7 @@ export default function App() {
             isAdmin={canUseAdminMode}
             currentWeek={currentWeek}
             selectedWeek={selectedWeek}
+            containerNoOptions={containerNoOptions}
           /></div>
           <div className="lg:col-span-2">
             <RecordList
@@ -705,7 +780,7 @@ export default function App() {
 
         <div className="mb-6">
           <Summary
-            state={state}
+            slots={dashboardSlots}
             costs={canUseAdminMode ? costs : null}
             selectedWeek={selectedWeek}
             currentWeek={currentWeek}
@@ -715,12 +790,12 @@ export default function App() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {CONTAINERS.map(config => (
+          {dashboardSlots.map(slot => (
             <ContainerCard
-              key={config.name}
-              config={config}
-              data={state[config.name]}
-              cost={canUseAdminMode ? costs[config.name] : null}
+              key={`${slot.config.name}-${slot.containerNo}`}
+              config={slot.config}
+              data={slot.data}
+              cost={canUseAdminMode ? costs[slot.config.name] : null}
             />
           ))}
         </div>
