@@ -87,7 +87,7 @@ grant execute on function public.set_user_role(text, text) to authenticated;
 drop function if exists public.create_invite(text);
 drop function if exists public.create_invite(text, text);
 
-create or replace function public.create_invite(target_email text, target_role text default 'viewer')
+create or replace function public.create_invite(target_email text, target_role text)
 returns table (code text, expires_at timestamptz)
 language plpgsql
 security definer
@@ -108,7 +108,7 @@ begin
     raise exception 'invalid invite role: %', target_role;
   end if;
 
-  new_code := upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12));
+  new_code := upper(substr(md5(random()::text || clock_timestamp()::text || coalesce(target_email, '')), 1, 12));
   exp := now() + interval '30 days';
 
   insert into public.invites (code, email, role, created_by, expires_at)
@@ -119,6 +119,17 @@ end;
 $$;
 
 grant execute on function public.create_invite(text, text) to authenticated;
+
+create or replace function public.create_invite(target_email text)
+returns table (code text, expires_at timestamptz)
+language sql
+security definer
+set search_path = public
+as $$
+  select * from public.create_invite(target_email, 'viewer');
+$$;
+
+grant execute on function public.create_invite(text) to authenticated;
 
 -- 6) Invitation consumption assigns the role stored on the invite.
 drop function if exists public.consume_invite(text);

@@ -29,7 +29,7 @@ export function useInvites() {
   }, [reloadKey])
 
   const create = useCallback(async (email) => {
-    const { data, error } = await supabase.rpc('create_invite', { target_email: email })
+    const { data, error } = await supabase.rpc('create_invite', { target_email: email, target_role: 'viewer' })
     if (error) throw error
     setReloadKey(k => k + 1)
     return data?.[0]

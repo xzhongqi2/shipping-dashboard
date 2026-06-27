@@ -1,8 +1,12 @@
 -- Fix invite code generation for databases where gen_random_bytes() is unavailable.
 -- Safe patch: replaces only the create_invite RPC body. Existing users, roles,
 -- records, and invite rows are not deleted or modified.
+-- This also keeps the older one-argument frontend call working.
 
-create or replace function public.create_invite(target_email text, target_role text default 'viewer')
+drop function if exists public.create_invite(text);
+drop function if exists public.create_invite(text, text);
+
+create or replace function public.create_invite(target_email text, target_role text)
 returns table (code text, expires_at timestamptz)
 language plpgsql
 security definer
@@ -23,7 +27,7 @@ begin
     raise exception 'invalid invite role: %', target_role;
   end if;
 
-  new_code := upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12));
+  new_code := upper(substr(md5(random()::text || clock_timestamp()::text || coalesce(target_email, '')), 1, 12));
   exp := now() + interval '30 days';
 
   insert into public.invites (code, email, role, created_by, expires_at)
@@ -34,3 +38,14 @@ end;
 $$;
 
 grant execute on function public.create_invite(text, text) to authenticated;
+
+create or replace function public.create_invite(target_email text)
+returns table (code text, expires_at timestamptz)
+language sql
+security definer
+set search_path = public
+as $$
+  select * from public.create_invite(target_email, 'viewer');
+$$;
+
+grant execute on function public.create_invite(text) to authenticated;
