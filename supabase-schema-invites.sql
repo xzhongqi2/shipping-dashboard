@@ -118,14 +118,19 @@ declare
   email text;
   has_invite boolean;
 begin
-  email := lower(event->'claims'->>'email');
+  email := lower(coalesce(event->'user'->>'email', ''));
+
+  if email = '' then
+    return jsonb_build_object(
+      'error', jsonb_build_object(
+        'http_code', 400,
+        'message', '无法读取登录邮箱，请重新输入邮箱'
+      )
+    );
+  end if;
 
   if email ~* '@starlinkai-logistics\.cn$' then
-    return jsonb_set(
-      event,
-      '{claims,app_metadata,role}',
-      to_jsonb('staff'::text)
-    );
+    return '{}'::jsonb;
   end if;
 
   select exists (
@@ -142,9 +147,10 @@ begin
   return jsonb_build_object(
     'error', jsonb_build_object(
       'http_code', 403,
-      'message', '此邮箱无访问权限。请联系管理员获取邀请,或使用公司邮箱登录'
+      'message', '此邮箱无访问权限。请确认使用收到邀请的邮箱，或联系管理员重新生成邀请链接'
     )
   );
 end;
 $$;
 grant execute on function public.before_user_created(jsonb) to supabase_auth_admin;
+revoke execute on function public.before_user_created(jsonb) from authenticated, anon, public;
