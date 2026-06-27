@@ -22,6 +22,7 @@ const CONTAINERS = [
 ]
 
 const DEFAULT_CONTAINER_NO = 1
+const MAX_CONTAINER_NO = 20
 
 
 // ─────────────────────────────────
@@ -37,8 +38,8 @@ function getContainerNo(record) {
   return Number.isInteger(num) && num > 0 ? num : DEFAULT_CONTAINER_NO
 }
 
-function isSlotUsed(data) {
-  return data.cbm > 0 || data.kg > 0 || data.revenue > 0
+function slotCountStorageKey(week) {
+  return `shipping-visible-container-slots:${week || 'unknown'}`
 }
 
 // ─────────────────────────────────
@@ -60,7 +61,7 @@ function RateBadge({ value, label }) {
 // ─────────────────────────────────
 // 组件：柜子卡片
 // ─────────────────────────────────
-function ContainerCard({ config, data, cost }) {
+function ContainerCard({ config, data, cost, canAddSlot, onAddSlot }) {
   const loadRate    = data.cbm / config.capacityCBM
   const weightRate  = data.kg  / config.capacityKG
   const revenueRate = cost ? data.revenue / cost : null
@@ -72,11 +73,24 @@ function ContainerCard({ config, data, cost }) {
           <h3 className="text-lg font-semibold text-gray-800">{config.name}</h3>
           <p className="text-xs text-gray-400 mt-0.5">第 {data.containerNo} 柜</p>
         </div>
-        {cost && (
-          <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded">
-            成本 ¥{cost.toLocaleString()}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {cost && (
+            <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded">
+              成本 ¥{cost.toLocaleString()}
+            </span>
+          )}
+          {canAddSlot && (
+            <button
+              type="button"
+              onClick={onAddSlot}
+              aria-label={`增加${config.name}下一柜`}
+              title={`增加${config.name}下一柜`}
+              className="h-8 w-8 rounded-full border border-blue-100 bg-blue-50 text-lg leading-none font-semibold text-blue-600 hover:bg-blue-100 hover:text-blue-700 transition-colors"
+            >
+              +
+            </button>
+          )}
+        </div>
       </div>
       <div className="grid grid-cols-3 gap-3 mb-4">
         <div className="text-center"><p className="text-xs text-gray-400">CBM</p>
@@ -271,13 +285,12 @@ function RecordList({ records, clientId, isAdmin, canWriteRecords, onDelete, onU
 // 组件：数据汇总
 // ─────────────────────────────────
 function Summary({ slots, costs, selectedWeek, currentWeek, weeksWithData, onWeekChange }) {
-  const countedSlots = slots.filter(slot => slot.containerNo === 1 || isSlotUsed(slot.data))
-  const totalCBM    = countedSlots.reduce((s, slot) => s + slot.data.cbm, 0)
-  const totalKG     = countedSlots.reduce((s, slot) => s + slot.data.kg, 0)
-  const totalRev    = countedSlots.reduce((s, slot) => s + slot.data.revenue, 0)
-  const capCBM      = countedSlots.reduce((s, slot) => s + slot.config.capacityCBM, 0)
-  const capKG       = countedSlots.reduce((s, slot) => s + slot.config.capacityKG, 0)
-  const totalCost   = costs ? countedSlots.reduce((s, slot) => s + (costs[slot.config.name] || 0), 0) : 0
+  const totalCBM    = slots.reduce((s, slot) => s + slot.data.cbm, 0)
+  const totalKG     = slots.reduce((s, slot) => s + slot.data.kg, 0)
+  const totalRev    = slots.reduce((s, slot) => s + slot.data.revenue, 0)
+  const capCBM      = slots.reduce((s, slot) => s + slot.config.capacityCBM, 0)
+  const capKG       = slots.reduce((s, slot) => s + slot.config.capacityKG, 0)
+  const totalCost   = costs ? slots.reduce((s, slot) => s + (costs[slot.config.name] || 0), 0) : 0
 
   const items = [
     { label: '总装载率', value: totalCBM / capCBM, detail: `${totalCBM.toFixed(2)} / ${capCBM} CBM` },
@@ -623,6 +636,18 @@ export default function App() {
   const clientId = useClientId()
   const { role } = useAuthUser()
   const [activePage, setActivePage] = useState(pageFromHash)
+  const [visibleSlotCountsByWeek, setVisibleSlotCountsByWeek] = useState(() => {
+    const counts = {}
+    try {
+      for (let week = 1; week <= 52; week += 1) {
+        const raw = window.localStorage.getItem(slotCountStorageKey(week))
+        if (raw) counts[week] = JSON.parse(raw)
+      }
+    } catch {
+      return {}
+    }
+    return counts
+  })
   const { records, add, update, remove } = useRecords()
   const { isAdmin, costs, password, login, logout, updateCost } = useAdmin()
   const { currentWeek, selectedWeek, setSelectedWeek, advance } = useWeek()
@@ -635,6 +660,20 @@ export default function App() {
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
+
+  const visibleSlotCounts = useMemo(
+    () => visibleSlotCountsByWeek[selectedWeek] || {},
+    [selectedWeek, visibleSlotCountsByWeek],
+  )
+
+  useEffect(() => {
+    if (!selectedWeek) return
+    try {
+      window.localStorage.setItem(slotCountStorageKey(selectedWeek), JSON.stringify(visibleSlotCounts))
+    } catch {
+      // localStorage may be unavailable in private browsing; the records themselves stay in Supabase.
+    }
+  }, [selectedWeek, visibleSlotCounts])
 
   const navigate = useCallback((page) => {
     const hash = page === 'dashboard' ? '' : `#${page}`
@@ -663,39 +702,45 @@ export default function App() {
     return CONTAINERS.flatMap(config => {
       const slotsByNo = state[config.name] || {}
       const existingNos = Object.keys(slotsByNo).map(Number)
-      const maxExisting = Math.max(DEFAULT_CONTAINER_NO, ...existingNos)
+      const manualCount = visibleSlotCounts[config.name] || DEFAULT_CONTAINER_NO
+      const maxExisting = Math.max(DEFAULT_CONTAINER_NO, manualCount, ...existingNos)
       const slots = []
       for (let no = 1; no <= maxExisting; no += 1) {
         slots.push({
           config,
           containerNo: no,
           data: slotsByNo[no] || { cbm: 0, kg: 0, revenue: 0, containerNo: no },
-        })
-      }
-      const last = slots[slots.length - 1]
-      const needsNext = last.data.cbm >= config.capacityCBM || last.data.kg >= config.capacityKG
-      if (needsNext) {
-        const no = maxExisting + 1
-        slots.push({
-          config,
-          containerNo: no,
-          data: { cbm: 0, kg: 0, revenue: 0, containerNo: no },
+          isLastSlot: no === maxExisting,
         })
       }
       return slots
     })
-  }, [state])
+  }, [state, visibleSlotCounts])
 
   const containerNoOptions = useMemo(() => {
     const options = {}
     CONTAINERS.forEach(config => {
       const slotsByNo = state[config.name] || {}
-      const maxExisting = Math.max(DEFAULT_CONTAINER_NO, ...Object.keys(slotsByNo).map(Number))
-      const maxOption = Math.min(20, maxExisting + 1)
+      const manualCount = visibleSlotCounts[config.name] || DEFAULT_CONTAINER_NO
+      const maxExisting = Math.max(DEFAULT_CONTAINER_NO, manualCount, ...Object.keys(slotsByNo).map(Number))
+      const maxOption = Math.min(MAX_CONTAINER_NO, maxExisting)
       options[config.name] = Array.from({ length: maxOption }, (_, i) => i + 1)
     })
     return options
-  }, [state])
+  }, [state, visibleSlotCounts])
+
+  const addContainerSlot = useCallback((containerName) => {
+    setVisibleSlotCountsByWeek(prevByWeek => {
+      const prev = prevByWeek[selectedWeek] || {}
+      const slotsByNo = state[containerName] || {}
+      const maxExisting = Math.max(DEFAULT_CONTAINER_NO, prev[containerName] || DEFAULT_CONTAINER_NO, ...Object.keys(slotsByNo).map(Number))
+      if (maxExisting >= MAX_CONTAINER_NO) return prevByWeek
+      return {
+        ...prevByWeek,
+        [selectedWeek]: { ...prev, [containerName]: maxExisting + 1 },
+      }
+    })
+  }, [selectedWeek, state])
 
   const weeksWithData = useMemo(() => {
     const s = new Set()
@@ -796,6 +841,8 @@ export default function App() {
               config={slot.config}
               data={slot.data}
               cost={canUseAdminMode ? costs[slot.config.name] : null}
+              canAddSlot={canWriteRecords && slot.isLastSlot && slot.containerNo < MAX_CONTAINER_NO}
+              onAddSlot={() => addContainerSlot(slot.config.name)}
             />
           ))}
         </div>
