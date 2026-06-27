@@ -70,7 +70,6 @@ async function readExcelPreview(file) {
   const cleaned = rows
     .map(row => normalizeRow(row).map(cell => String(cell ?? '').trim()))
     .filter(row => row.some(Boolean))
-    .slice(0, 60)
 
   return {
     sheetName: /\.csv$/i.test(file.name) ? 'CSV' : 'Sheet1',
@@ -105,36 +104,63 @@ function getTextWidth(value) {
   return width
 }
 
+function wrapCellText(value, maxChars) {
+  const text = String(value ?? '')
+  if (!text) return ['']
+  const parts = []
+  let line = ''
+  for (const char of text) {
+    const lineWidth = getTextWidth(line + char)
+    if (line && lineWidth > maxChars * 8) {
+      parts.push(line)
+      line = char
+    } else {
+      line += char
+    }
+  }
+  if (line) parts.push(line)
+  return parts.slice(0, 6)
+}
+
 function buildSheetImage(preview) {
   const headers = preview?.headers || []
   const rows = preview?.rows || []
-  const tableRows = [headers, ...rows].filter(row => row?.some(Boolean)).slice(0, 36)
+  const tableRows = [headers, ...rows].filter(row => row?.some(Boolean))
   const columnCount = Math.max(...tableRows.map(row => row.length), 1)
   const columnWidths = Array.from({ length: columnCount }, (_, index) => {
     const widest = tableRows.reduce((max, row) => Math.max(max, getTextWidth(row[index])), 0)
-    return Math.max(110, Math.min(widest + 32, 260))
+    return Math.max(140, Math.min(widest + 36, 520))
   })
-  const rowHeight = 38
   const titleHeight = 46
   const width = columnWidths.reduce((sum, col) => sum + col, 0) + 2
-  const height = titleHeight + tableRows.length * rowHeight + 2
+  const rowLayouts = tableRows.map(row => {
+    const cells = columnWidths.map((colWidth, colIndex) => {
+      const maxChars = Math.max(10, Math.floor((colWidth - 24) / 8))
+      return wrapCellText(row[colIndex] || '', maxChars)
+    })
+    const lineCount = Math.max(...cells.map(lines => lines.length), 1)
+    return { cells, height: Math.max(38, 20 + lineCount * 19) }
+  })
+  const height = titleHeight + rowLayouts.reduce((sum, row) => sum + row.height, 0) + 2
 
   let y = titleHeight
-  const body = tableRows.map((row, rowIndex) => {
+  const body = rowLayouts.map((rowLayout, rowIndex) => {
     let x = 1
     const cells = columnWidths.map((colWidth, colIndex) => {
-      const text = escapeXml(row[colIndex] || '')
+      const lines = rowLayout.cells[colIndex] || ['']
       const bg = rowIndex === 0 ? '#eef4ff' : rowIndex % 2 ? '#ffffff' : '#f8fafc'
       const weight = rowIndex === 0 ? '700' : '500'
       const color = rowIndex === 0 ? '#1f3b63' : '#334155'
       const cell = `
-        <rect x="${x}" y="${y}" width="${colWidth}" height="${rowHeight}" fill="${bg}" stroke="#dbe3ee" />
-        <text x="${x + 12}" y="${y + 24}" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="14" font-weight="${weight}" fill="${color}">${text}</text>
+        <rect x="${x}" y="${y}" width="${colWidth}" height="${rowLayout.height}" fill="${bg}" stroke="#dbe3ee" />
+        <text x="${x + 12}" y="${y + 24}" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="14" font-weight="${weight}" fill="${color}">
+          ${lines.map((line, lineIndex) => `<tspan x="${x + 12}" dy="${lineIndex === 0 ? 0 : 19}">${escapeXml(line)}</tspan>`).join('')}
+        </text>
       `
       x += colWidth
       return cell
     }).join('')
-    y += rowHeight
+    y += rowLayout.height
     return cells
   }).join('')
 
