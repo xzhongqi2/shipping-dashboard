@@ -86,58 +86,67 @@ async function readExcelPreview(file) {
     const ExcelJS = await import('exceljs')
     const workbook = new ExcelJS.Workbook()
     await workbook.xlsx.load(await file.arrayBuffer())
-    const sheet = workbook.worksheets[0]
-    const rowCount = sheet.rowCount
-    const colCount = sheet.columnCount
-    const columns = Array.from({ length: colCount }, (_, index) => {
-      const column = sheet.getColumn(index + 1)
-      return Math.max(58, Math.min((column.width || 12) * 8, 260))
-    })
-    const rows = []
+    const sheets = workbook.worksheets.map(sheet => {
+      const rowCount = sheet.rowCount
+      const colCount = sheet.columnCount
+      const columns = Array.from({ length: colCount }, (_, index) => {
+        const column = sheet.getColumn(index + 1)
+        return Math.max(58, Math.min((column.width || 12) * 8, 260))
+      })
+      const rows = []
 
-    for (let rowIndex = 1; rowIndex <= rowCount; rowIndex += 1) {
-      const row = sheet.getRow(rowIndex)
-      const cells = []
-      for (let colIndex = 1; colIndex <= colCount; colIndex += 1) {
-        const cell = row.getCell(colIndex)
-        const fill = cell.fill?.fgColor ? excelColorToHex(cell.fill.fgColor, '#ffffff') : '#ffffff'
-        const font = cell.font || {}
-        const alignment = cell.alignment || {}
-        cells.push({
-          text: cellValueToText(cell.value).trim(),
-          fill,
-          color: excelColorToHex(font.color, '#111827'),
-          bold: Boolean(font.bold),
-          italic: Boolean(font.italic),
-          size: font.size || 13,
-          align: alignment.horizontal || 'center',
-          valign: alignment.vertical || 'middle',
-          wrap: Boolean(alignment.wrapText),
-          border: Boolean(cell.border && Object.keys(cell.border).length),
+      for (let rowIndex = 1; rowIndex <= rowCount; rowIndex += 1) {
+        const row = sheet.getRow(rowIndex)
+        const cells = []
+        for (let colIndex = 1; colIndex <= colCount; colIndex += 1) {
+          const cell = row.getCell(colIndex)
+          const fill = cell.fill?.fgColor ? excelColorToHex(cell.fill.fgColor, '#ffffff') : '#ffffff'
+          const font = cell.font || {}
+          const alignment = cell.alignment || {}
+          cells.push({
+            text: cellValueToText(cell.value).trim(),
+            fill,
+            color: excelColorToHex(font.color, '#111827'),
+            bold: Boolean(font.bold),
+            italic: Boolean(font.italic),
+            size: font.size || 13,
+            align: alignment.horizontal || 'center',
+            valign: alignment.vertical || 'middle',
+            wrap: Boolean(alignment.wrapText),
+            border: Boolean(cell.border && Object.keys(cell.border).length),
+          })
+        }
+        rows.push({
+          height: Math.max(28, Math.min((row.height || 24) * 1.25, 90)),
+          cells,
         })
       }
-      rows.push({
-        height: Math.max(28, Math.min((row.height || 24) * 1.25, 90)),
-        cells,
-      })
-    }
 
-    const merges = Object.values(sheet._merges || {}).map(merge => {
-      const model = merge.model || merge
+      const merges = Object.values(sheet._merges || {}).map(merge => {
+        const model = merge.model || merge
+        return {
+          top: model.top,
+          left: model.left,
+          bottom: model.bottom,
+          right: model.right,
+        }
+      }).filter(merge => merge.top && merge.left && merge.bottom && merge.right)
+
       return {
-        top: model.top,
-        left: model.left,
-        bottom: model.bottom,
-        right: model.right,
+        sheetName: sheet.name || 'Sheet1',
+        columns,
+        rows,
+        merges,
       }
-    }).filter(merge => merge.top && merge.left && merge.bottom && merge.right)
+    }).filter(sheet => sheet.rows.some(row => row.cells.some(cell => cell.text)))
 
     return {
       mode: 'styled',
-      sheetName: sheet.name || 'Sheet1',
-      columns,
-      rows,
-      merges,
+      sheets,
+      sheetName: sheets[0]?.sheetName || 'Sheet1',
+      columns: sheets[0]?.columns || [],
+      rows: sheets[0]?.rows || [],
+      merges: sheets[0]?.merges || [],
     }
   }
 
@@ -326,6 +335,29 @@ function buildStyledSheetImage(preview) {
 }
 
 function ExcelPreview({ preview }) {
+  if (preview?.mode === 'styled') {
+    const sheets = preview.sheets?.length
+      ? preview.sheets
+      : [{ sheetName: preview.sheetName, columns: preview.columns, rows: preview.rows, merges: preview.merges }]
+    if (!sheets.some(sheet => sheet.rows?.length)) return null
+
+    return (
+      <div className="space-y-5">
+        {sheets.map((sheet, index) => {
+          const imageSrc = buildStyledSheetImage(sheet)
+          return (
+            <section key={`${sheet.sheetName || 'Sheet'}-${index}`} className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+              <div className="mb-2 text-sm font-semibold text-gray-700">{sheet.sheetName || `Sheet${index + 1}`}</div>
+              <div className="overflow-x-auto">
+                <img src={imageSrc} alt={`${sheet.sheetName || 'Excel'} 图片预览`} className="max-w-none rounded-xl shadow-sm" />
+              </div>
+            </section>
+          )
+        })}
+      </div>
+    )
+  }
+
   const headers = preview?.headers || []
   const rows = preview?.rows || []
   if (!headers.length && !rows.length) return null
