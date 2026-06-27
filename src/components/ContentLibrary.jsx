@@ -94,11 +94,11 @@ function ExcelPreview({ preview }) {
 
   return (
     <div className="overflow-x-auto border border-gray-100 rounded-xl">
-      <table className="min-w-full text-sm">
+      <table className="min-w-full text-sm table-fixed">
         <thead className="bg-gray-50">
           <tr>
             {headers.map((header, idx) => (
-              <th key={`${header}-${idx}`} className="text-left text-xs font-semibold text-gray-500 px-3 py-2 whitespace-nowrap">
+              <th key={`${header}-${idx}`} className="text-left text-xs font-semibold text-gray-500 px-3 py-2 whitespace-nowrap min-w-32 max-w-56 truncate">
                 {header || `列 ${idx + 1}`}
               </th>
             ))}
@@ -108,7 +108,7 @@ function ExcelPreview({ preview }) {
           {rows.map((row, rowIndex) => (
             <tr key={rowIndex} className="border-t border-gray-50">
               {headers.map((_, colIndex) => (
-                <td key={`${rowIndex}-${colIndex}`} className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">
+                <td key={`${rowIndex}-${colIndex}`} className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap min-w-32 max-w-56 truncate" title={row[colIndex] || ''}>
                   {row[colIndex] || ''}
                 </td>
               ))}
@@ -184,6 +184,7 @@ function UploadPanel({ title, type, canUpload, onUpload }) {
 
   const submit = async (e) => {
     e.preventDefault()
+    const form = e.currentTarget
     setMsg('')
     if (!file) { setMsg('请选择 Excel 或图片文件'); return }
 
@@ -201,7 +202,7 @@ function UploadPanel({ title, type, canUpload, onUpload }) {
       })
       setUploadTitle('')
       setFile(null)
-      e.currentTarget.reset()
+      form.reset()
       setMsg('已发布')
       setTimeout(() => setMsg(''), 1800)
     } catch (err) {
