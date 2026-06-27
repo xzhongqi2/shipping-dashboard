@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useRecords } from './hooks/useRecords'
 import { useClientId } from './hooks/useClientId'
 import { useAdmin } from './hooks/useAdmin'
@@ -7,6 +7,7 @@ import { useAuthUser } from './hooks/useAuthUser'
 import { supabase } from './lib/supabase'
 import { InvitePanel } from './components/InvitePanel'
 import { PermissionCenter } from './components/PermissionCenter'
+import { ContentLibrary } from './components/ContentLibrary'
 
 // ─────────────────────────────────
 // 柜子配置
@@ -553,18 +554,63 @@ function UserBadge() {
   )
 }
 
+function pageFromHash() {
+  const hash = window.location.hash.replace('#', '')
+  if (hash === 'schedule' || hash === 'quotes') return hash
+  return 'dashboard'
+}
+
+function HeaderNav({ activePage, onNavigate }) {
+  const items = [
+    { key: 'schedule', label: '最新船期' },
+    { key: 'quotes', label: '本周报价' },
+    { key: 'dashboard', label: '拼柜看板' },
+  ]
+
+  return (
+    <div className="flex items-center gap-2">
+      {items.map(item => (
+        <button key={item.key} onClick={() => onNavigate(item.key)}
+          className={`text-sm px-4 py-2 rounded-lg border transition-colors ${
+            activePage === item.key
+              ? 'bg-blue-600 border-blue-600 text-white'
+              : 'bg-white border-gray-200 text-gray-600 hover:text-gray-900 hover:border-gray-300'
+          }`}>
+          {item.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // ─────────────────────────────────
 // 主 App
 // ─────────────────────────────────
 export default function App() {
   const clientId = useClientId()
   const { role } = useAuthUser()
+  const [activePage, setActivePage] = useState(pageFromHash)
   const { records, add, update, remove } = useRecords()
   const { isAdmin, costs, password, login, logout, updateCost } = useAdmin()
   const { currentWeek, selectedWeek, setSelectedWeek, advance } = useWeek()
   const canWriteRecords = ['owner', 'staff', 'operator'].includes(role)
   const canSeeSensitive = ['owner', 'staff'].includes(role)
   const canUseAdminMode = isAdmin && canSeeSensitive
+
+  useEffect(() => {
+    const onHashChange = () => setActivePage(pageFromHash())
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
+  const navigate = useCallback((page) => {
+    const hash = page === 'dashboard' ? '' : `#${page}`
+    if (window.location.hash === hash) {
+      setActivePage(page)
+      return
+    }
+    window.location.hash = hash
+  }, [])
 
   const state = useMemo(() => {
     const s = {}
@@ -612,19 +658,25 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50/80">
       <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-6 py-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-xl font-bold text-gray-900">⚓ 海运拼箱 Dashboard</h1>
             <p className="text-xs text-gray-400">实时追踪柜子装载、重量与收入情况</p>
           </div>
-          <div className="flex items-center">
-            <UserBadge />
-            {canUseAdminMode && <NextWeekButton currentWeek={currentWeek} password={password} onAdvance={advance} />}
-            {canSeeSensitive && <AdminButton isAdmin={isAdmin} onLogin={login} onLogout={logout} />}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <HeaderNav activePage={activePage} onNavigate={navigate} />
+            <div className="flex items-center justify-end">
+              <UserBadge />
+              {activePage === 'dashboard' && canUseAdminMode && <NextWeekButton currentWeek={currentWeek} password={password} onAdvance={advance} />}
+              {activePage === 'dashboard' && canSeeSensitive && <AdminButton isAdmin={isAdmin} onLogin={login} onLogout={logout} />}
+            </div>
           </div>
         </div>
       </header>
 
+      {activePage === 'schedule' && <ContentLibrary type="schedule" role={role} />}
+      {activePage === 'quotes' && <ContentLibrary type="quotes" role={role} />}
+      {activePage !== 'dashboard' ? null : (
       <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           <div><InputForm
@@ -680,6 +732,7 @@ export default function App() {
           onSelectWeek={setSelectedWeek}
         />
       </main>
+      )}
     </div>
   )
 }
