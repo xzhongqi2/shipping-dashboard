@@ -42,6 +42,10 @@ function slotCountStorageKey(week) {
   return `shipping-visible-container-slots:${week || 'unknown'}`
 }
 
+function hasSlotData(data) {
+  return data.cbm > 0 || data.kg > 0 || data.revenue > 0
+}
+
 // ─────────────────────────────────
 // 组件：比率徽章
 // ─────────────────────────────────
@@ -61,7 +65,7 @@ function RateBadge({ value, label }) {
 // ─────────────────────────────────
 // 组件：柜子卡片
 // ─────────────────────────────────
-function ContainerCard({ config, data, cost, canAddSlot, onAddSlot }) {
+function ContainerCard({ config, data, cost, canAddSlot, onAddSlot, canRemoveSlot, onRemoveSlot }) {
   const loadRate    = data.cbm / config.capacityCBM
   const weightRate  = data.kg  / config.capacityKG
   const revenueRate = cost ? data.revenue / cost : null
@@ -88,6 +92,17 @@ function ContainerCard({ config, data, cost, canAddSlot, onAddSlot }) {
               className="h-8 w-8 rounded-full border border-blue-100 bg-blue-50 text-lg leading-none font-semibold text-blue-600 hover:bg-blue-100 hover:text-blue-700 transition-colors"
             >
               +
+            </button>
+          )}
+          {canRemoveSlot && (
+            <button
+              type="button"
+              onClick={onRemoveSlot}
+              aria-label={`收起${config.name}第${data.containerNo}柜`}
+              title="数据为 0 时可收起这个柜子"
+              className="h-8 w-8 rounded-full border border-red-100 bg-red-50 text-lg leading-none font-semibold text-red-500 hover:bg-red-100 hover:text-red-600 transition-colors"
+            >
+              -
             </button>
           )}
         </div>
@@ -742,6 +757,19 @@ export default function App() {
     })
   }, [selectedWeek, state])
 
+  const removeContainerSlot = useCallback((containerName) => {
+    setVisibleSlotCountsByWeek(prevByWeek => {
+      const prev = prevByWeek[selectedWeek] || {}
+      const slotsByNo = state[containerName] || {}
+      const maxExisting = Math.max(DEFAULT_CONTAINER_NO, prev[containerName] || DEFAULT_CONTAINER_NO, ...Object.keys(slotsByNo).map(Number))
+      if (maxExisting <= DEFAULT_CONTAINER_NO || hasSlotData(slotsByNo[maxExisting])) return prevByWeek
+      return {
+        ...prevByWeek,
+        [selectedWeek]: { ...prev, [containerName]: maxExisting - 1 },
+      }
+    })
+  }, [selectedWeek, state])
+
   const weeksWithData = useMemo(() => {
     const s = new Set()
     records.forEach(r => { if (r.week_number) s.add(r.week_number) })
@@ -843,6 +871,8 @@ export default function App() {
               cost={canUseAdminMode ? costs[slot.config.name] : null}
               canAddSlot={canWriteRecords && slot.isLastSlot && slot.containerNo < MAX_CONTAINER_NO}
               onAddSlot={() => addContainerSlot(slot.config.name)}
+              canRemoveSlot={canWriteRecords && slot.isLastSlot && slot.containerNo > DEFAULT_CONTAINER_NO && !hasSlotData(slot.data)}
+              onRemoveSlot={() => removeContainerSlot(slot.config.name)}
             />
           ))}
         </div>
